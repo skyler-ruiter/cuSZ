@@ -29,6 +29,7 @@ class pszmempool_cxx {
 
   pszmem_cxx<E> *e, *el, *es;  // ectrl, e-Lorenzo, e-spline
   pszmem_cxx<F> *ht;           // histogram/frequency
+  pszmem_cxx<F> *ht_psh;       // histogram/frequency for psh branch
 
   pszmem_cxx<T> *oc;  // outlier compat
   pszmem_cxx<T> *sv;  // sp-val
@@ -52,6 +53,7 @@ class pszmempool_cxx {
   T *outlier_val() { return sv->dptr(); }
   M *outlier_idx() { return si->dptr(); }
   F *hist() { return ht->dptr(); }
+  F *hist_psh() { return ht_psh->dptr(); }
   E *ectrl_lrz() { return el->dptr(); }
   E *ectrl_spl() { return es->dptr(); }
   T *anchor() { return ac->dptr(); }
@@ -93,6 +95,7 @@ TPL POOL::pszmempool_cxx(u4 x, int _radius, u4 y, u4 z)
   es = new pszmem_cxx<E>(xp, yp, zp, "ectrl-spline");
 
   ht = new pszmem_cxx<F>(bklen, 1, 1, "hist");
+  ht_psh = new pszmem_cxx<F>(bklen, 1, 1, "hist");
   // sv = new pszmem_cxx<T>(x, y, z, "sp-val");
   // si = new pszmem_cxx<M>(x, y, z, "sp-idx");
 
@@ -103,6 +106,7 @@ TPL POOL::pszmempool_cxx(u4 x, int _radius, u4 y, u4 z)
   ac->control({Malloc, MallocHost});
   e->control({Malloc, MallocHost});
   ht->control({Malloc, MallocHost});
+  ht_psh->control({Malloc, MallocHost});
   // sv->control({Malloc, MallocHost});
   // si->control({Malloc, MallocHost});
 

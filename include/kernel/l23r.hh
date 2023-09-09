@@ -20,6 +20,7 @@
 template <typename T, typename Eq = uint32_t, bool ZigZag = false>
 cusz_error_status psz_comp_l23r(
     T* const data, dim3 const len3, double const eb, int const radius,
-    Eq* const eq, void* _outlier, float* time_elapsed, void* _stream);
+    Eq* const eq, void* _outlier, float* time_elapsed, void* _stream,
+    uint32_t* hist = nullptr);
 
 #endif /* EBA07D6C_FD5C_446C_9372_F78DDB5E2B34 */
