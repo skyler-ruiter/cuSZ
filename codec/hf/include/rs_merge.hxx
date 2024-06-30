@@ -59,7 +59,7 @@ void make_alternative_code(
 
 }  // namespace phf
 
-namespace phf::cu_hip {
+namespace phf::cuhip {
 
 template <
     typename T, int Magnitude, int ReduceTimes, bool use_scan = false,

@@ -58,7 +58,7 @@ void TEST_single_block_v2()
   // for (auto i = 0; i < bk.len(); i++) cout << bk.hat(i) << endl;
   buf->bk4->control({H2D});
 
-  phf::cu_hip::GPU_HFReVISIT_encode<T, Magnitude, ReduceTimes, false, u4>(
+  phf::cuhip::GPU_HFReVISIT_encode<T, Magnitude, ReduceTimes, false, u4>(
       {in.dptr(), in.len()},
       {buf->bk4->array1_d(), ALT::alt_code, ALT::alt_bitcount},
       buf->dense_space(1), buf->sparse_space(), stream);

@@ -241,7 +241,7 @@ __global__ void KERNEL_CUHIP_HFReVISIT_encode(
 
 ////////////////////////////////////////////////////////////////////////////////
 
-namespace phf::cu_hip {
+namespace phf::cuhip {
 
 // TODO add dn_bitcount length
 template <
@@ -281,10 +281,10 @@ void GPU_HFReVISIT_encode(
   cudaStreamSynchronize((cudaStream_t)stream);
 }
 
-}  // namespace phf::cu_hip
+}  // namespace phf::cuhip
 
 #define __INSTANTIATE_RSMERGE_4(T, MAG, RED, SCAN)                            \
-  template void phf::cu_hip::GPU_HFReVISIT_encode<T, MAG, RED, SCAN>(         \
+  template void phf::cuhip::GPU_HFReVISIT_encode<T, MAG, RED, SCAN>(         \
       INPUT hfcxx_array<T> in, hfcxx_book<u4> book,                           \
       OUTPUT hfcxx_dense<u4> dn, hfcxx_compact<T> sp, GPU_QUEUE void* stream, \
       DEBUG u4 debug_blockid);
