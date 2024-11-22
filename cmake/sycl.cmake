@@ -55,7 +55,7 @@ target_include_directories(
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/cusz>)
 
-add_library(pszstat_seq src/stat/compare.stl.cc)
+add_library(pszstat_seq psz/src/stat/compare.stl.cc)
 target_link_libraries(pszstat_seq PUBLIC pszcompile_settings)
 
 add_library(

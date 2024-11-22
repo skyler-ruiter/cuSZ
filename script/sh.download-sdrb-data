@@ -78,11 +78,11 @@ if [ ! -d "$DATA_DIR/280953867" ]; then
     tar -C $DATA_DIR -xvf $DATA_DIR/EXASKY-HACC-data-medium-size.tar.gz
 fi
 
-banner "HACC 4GB";
-if [ ! -f "$DATA_DIR/EXASKY-HACC-data-big-size.tar.gz" ]; then
-    wget -c -P $DATA_DIR https://g-8d6b0.fd635.8443.data.globus.org/ds131.2/Data-Reduction-Repo/raw-data/EXASKY/HACC/EXASKY-HACC-data-big-size.tar.gz
-fi
+# banner "HACC 4GB";
+# if [ ! -f "$DATA_DIR/EXASKY-HACC-data-big-size.tar.gz" ]; then
+#     wget -c -P $DATA_DIR https://g-8d6b0.fd635.8443.data.globus.org/ds131.2/Data-Reduction-Repo/raw-data/EXASKY/HACC/EXASKY-HACC-data-big-size.tar.gz
+# fi
 
-if [ ! -d "$DATA_DIR/1billionparticles_onesnapshot" ]; then
-    tar -C $DATA_DIR -xvf $DATA_DIR/EXASKY-HACC-data-big-size.tar.gz
-fi
+# if [ ! -d "$DATA_DIR/1billionparticles_onesnapshot" ]; then
+#     tar -C $DATA_DIR -xvf $DATA_DIR/EXASKY-HACC-data-big-size.tar.gz
+# fi
