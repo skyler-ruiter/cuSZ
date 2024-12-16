@@ -1,15 +1,20 @@
 #! /usr/bin/bash
 
 # set home directory for machine
-CUSZ=${HOME}/sz_compression/cusz-dev
+# CUSZ=${HOME}/sz_compression/cusz-dev
+CUSZ=${HOME}/cusz-dev
 
 # load environment
 source ${CUSZ}/profiling/env.sh
 
 CESM=1800x3600
+CESM_DIMS=3600x1800
 EXAALT=2869440
+EXAALT_DIMS=2869440
 HURR=100x500x500
+HURR_DIMS=500x500x100
 HACC_M=280953867
+HACC_M_DIMS=280953867
 DATA_DIR=${CUSZ}/data
 
 # make an output directory
@@ -59,7 +64,7 @@ for data in "${DATA[@]}"; do
         OUTPUT=${OUTPUT_DIR}/${data}/$(basename ${datum}).cusz
 
         # run cusz with compression and report time and compression ratio
-        CMD="${CUSZ_BIN} -t f32 -m r2r -e 1e-4 -i ${datum} -l 3600x1800 -z --report time,cr > ${OUTPUT_DIR}/${data}/$(basename ${datum})_rep${i}.txt"
+        CMD="${CUSZ_BIN} -t f32 -m r2r -e 1e-4 -i ${datum} -l ${!data}_DIMS -z --report time,cr > ${OUTPUT_DIR}/${data}/$(basename ${datum})_rep${i}.txt"
         eval ${CMD}
 
         # run cusz with decompression and report time
