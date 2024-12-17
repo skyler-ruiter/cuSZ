@@ -47,6 +47,12 @@ source ${CUSZ}/profiling/delete_comp.sh > /dev/null
 for data in "${DATA[@]}"; do
   echo "Running cusz on ${data} data"
 
+
+  # if CESM  or HURR skip
+  if [ "$data" != "HACC_M_DIR" ]; then
+    continue
+  fi
+
   dir="${!data}"
 
   dims_var="${data}_DIMS"

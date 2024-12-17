@@ -5,7 +5,7 @@ def read_f32_file(file_path):
     data = np.fromfile(f, dtype=np.float32)
   return data
 
-file_path = '../data/2869440/vx.dat2'
+file_path = '../data/280953867/vx.f32'
 data = read_f32_file(file_path)
 
 # print the first 10 elements
