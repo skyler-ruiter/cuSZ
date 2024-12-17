@@ -1,20 +1,20 @@
 #! /usr/bin/bash
 
 # set home directory for machine
-# CUSZ=${HOME}/sz_compression/cusz-dev
-CUSZ=${HOME}/cusz-dev
+CUSZ=${HOME}/sz_compression/cusz-dev
+# CUSZ=${HOME}/cusz-dev
 
 # load environment
 source ${CUSZ}/profiling/env.sh
 
 CESM=1800x3600
-CESM_DIMS=3600x1800
+CESM_DIR_DIMS=3600x1800
 EXAALT=2869440
-EXAALT_DIMS=2869440
+EXAALT_DIR_DIMS=2869440
 HURR=100x500x500
-HURR_DIMS=500x500x100
+HURR_DIR_DIMS=500x500x100
 HACC_M=280953867
-HACC_M_DIMS=280953867
+HACC_M_DIR_DIMS=280953867
 DATA_DIR=${CUSZ}/data
 
 # make an output directory
@@ -47,13 +47,18 @@ source ${CUSZ}/profiling/delete_comp.sh > /dev/null
 for data in "${DATA[@]}"; do
   echo "Running cusz on ${data} data"
 
+  dir="${!data}"
+
+  dims_var="${data}_DIMS"
+  dims=${!dims_var}
+  echo "Dimensions: ${dims_var} = ${dims}"
+
   # for each file in the dataset
-  for datum in ${!data}/*.f32; do
+  for datum in "$dir"/*.f32; do
 
     ############################
 
     if [ -f "$datum" ]; then
-      echo "Running cusz on ${datum}"
 
       # make an output directory (/CESM, /EXAALT, /HURR, /HACC_M)
       mkdir -p ${OUTPUT_DIR}/${data}
@@ -64,7 +69,10 @@ for data in "${DATA[@]}"; do
         OUTPUT=${OUTPUT_DIR}/${data}/$(basename ${datum}).cusz
 
         # run cusz with compression and report time and compression ratio
-        CMD="${CUSZ_BIN} -t f32 -m r2r -e 1e-4 -i ${datum} -l ${${!data}_DIMS} -z --report time,cr > ${OUTPUT_DIR}/${data}/$(basename ${datum})_rep${i}.txt"
+        CMD="${CUSZ_BIN} -t f32 -m r2r -e 1e-4 -i ${datum} -l ${dims} -z --report time,cr > ${OUTPUT_DIR}/${data}/$(basename ${datum})_rep${i}.txt"
+
+        echo ${CMD}
+
         eval ${CMD}
 
         # run cusz with decompression and report time

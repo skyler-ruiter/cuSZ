@@ -17,7 +17,6 @@ def remove_ansi_escape_sequences(file_path):
         # Overwrite the original file with cleaned content
         with open(file_path, 'w') as file:
             file.write(cleaned_content)
-        print(f"Cleaned file: {file_path}")
 
 def process_directory(directory):
     for root, _, files in os.walk(directory):
