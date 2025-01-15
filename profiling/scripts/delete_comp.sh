@@ -1,7 +1,7 @@
 #! /usr/bin/bash
 
 #DATA_DIR=${HOME}/sz_compression/cusz-dev/data
-DATA_DIR=${HOME}/sz_compression/cusz-dev/data
+DATA_DIR=${HOME}/sz_compression/cusz-dev/profiling/data
 
 CESM=1800x3600
 EXAALT=2869440

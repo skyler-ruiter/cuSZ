@@ -9,7 +9,7 @@ base_dir = "../profiling/output"
 skipped_data = []
 
 def gatherKernelStatistics(dataset, file):
-    data_dir = os.path.join(base_dir, dataset) + "_DIR"
+    data_dir = os.path.join(base_dir, dataset)
     
     # compression (5 replicates)
     comp_times = {}
@@ -26,22 +26,24 @@ def gatherKernelStatistics(dataset, file):
         kernel_data = {}
         
         # open the compression file data and add to dictionary
-        with open(comp_file, 'r') as comp_file:
-            # skip first 4 lines
-            lines = comp_file.readlines()[4:]
-            
-            # get the kernel name, time, and throughput
-            for line in lines:
-                kernel, time, throughput = line.split()
-                kernel_data[kernel] = {
-                    'time': float(time),
-                    'throughput': float(throughput)
-                }
-                # if (total) is kernel, end of kernel data
-                if kernel == "(total)":
-                    break
-        
-        comp_times[f"rep{i}"] = kernel_data
+        try:
+            with open(comp_file, 'r') as comp_file:
+                # skip first 4 lines
+                lines = comp_file.readlines()[4:]
+                
+                # get the kernel name, time, and throughput
+                for line in lines:
+                    kernel, time, throughput = line.split()
+                    kernel_data[kernel] = {
+                        'time': float(time),
+                        'throughput': float(throughput)
+                    }
+                    # if (total) is kernel, end of kernel data
+                    if kernel == "(total)":
+                        break
+            comp_times[f"rep{i}"] = kernel_data
+        except FileNotFoundError:
+            skipped_data.append(comp_file)
     
     return comp_times
 
@@ -52,7 +54,7 @@ for data in datasets:
     combined_data = {}
     
     data_dir = os.path.join(base_dir, data) 
-    data_dir = data_dir + "_DIR"
+    data_dir = data_dir
     
     print(data_dir)
     
@@ -79,6 +81,7 @@ for data in datasets:
     # average the data
     for file, rep_data in combined_data.items():
         averaged_data[file] = {}
+        replicate_count = len(rep_data)
         
         for rep, kernels in rep_data.items():
             for kernel, metrics in kernels.items():
@@ -88,11 +91,8 @@ for data in datasets:
                 averaged_data[file][kernel]['throughput'] += metrics['throughput']
                 
         for kernel, metrics in averaged_data[file].items():
-            metrics['time'] /= 5
-            metrics['throughput'] /= 5
-            
-    # print(averaged_data)
-    # print("\n")
+            metrics['time'] /= replicate_count
+            metrics['throughput'] /= replicate_count
     
     # write the averaged data to a csv file
     with open(f"{data}_averaged_data.csv", 'w') as write_file:
@@ -136,7 +136,7 @@ for dataset_csv in dataset_csvs:
 
 # Write combined data to a new CSV file
 if combined_data:
-    with open("combined_kernel_data.csv", 'w') as write_file:
+    with open("kernel_data.csv", 'w') as write_file:
         writer = csv.writer(write_file)
         
         # Write headers
@@ -157,6 +157,11 @@ if combined_data:
                     row.append(round(data[kernel]['throughput'], 3))
             writer.writerow(row)
 
-    print("combined_kernel_data.csv has been written.")
+    print("kernel_data.csv has been written.")
 else:
-    print("No data to write to combined_kernel_data.csv.")
+    print("No data to write to kernel_data.csv.")
+    
+# remove the individual dataset csvs
+for dataset_csv in dataset_csvs:
+    os.remove(dataset_csv)
+    print(f"{dataset_csv} has been removed.")

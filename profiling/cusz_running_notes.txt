@@ -1,0 +1,59 @@
+Profiling Instructions:
+
+1. If needed get data to profile (SDRB data can be downloaded and unzipped using the download-sdrb-data.sh script)
+
+  - this gets 4 datasets and puts them in folders of their dimensions
+
+2. build cusz (instructions on github)
+
+  - clone repo and create /build
+  - run cmake and make
+
+cmake .. \
+    -DPSZ_BACKEND=cuda \
+    -DPSZ_BUILD_EXAMPLES=on \
+    -DCMAKE_CUDA_ARCHITECTURES="86" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_COLOR_DIAGNOSTICS=on \
+    -DCMAKE_INSTALL_PREFIX=~/sz_compression/cusz-dev/build
+make -j
+make install
+
+3. make a folder for profiling data /profiling and navigate to /build 
+
+4. run ./../profiling/scripts/run_tests.sh r2r 1e-4
+
+  - which runs env.sh (change to setup your environment)
+  - renames exaalt data to .f32
+  - (delete_comp.sh) deletes old .cusz and .cusza files
+  - for each dataset:
+	- make output, run compress and decompress 5 times
+  - run python scripts
+	- output_cleaner.py ~ removes non-completed runs
+	- kernel_data_collector.py ~ gathers data from kernel profiling to a csv
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Command Structure:
+
+  - Compress
+	./cusz -t {data_t} -m {err_t} -e {err} -i {data} -l {dims} -z
+	- can add --report time,cr
+  - Decompress
+	./cusz -i {data.cusza} -x
+	- can add --report time --compare {original_data}
+
+  - data_t = f32, f64
+  - err_t = r2r, abs
+
+  - Example:
+    ./cusz -t f32 -m r2r -e 1e-4 -i CLDHGH_1_1800_3600.f32 -l 3600x1800 -z --report time,cr
+    ./cusz -i CLDHGH_1_1800_3600.f32.cusz -x --report time --compare CLDHGH_1_1800_3600.f32
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Misc Notes:
+
+- 01/14/2025:
+  - needed to #include <array> to /psz/include/kernel/lrz/lrz.gpu_config.hh 
