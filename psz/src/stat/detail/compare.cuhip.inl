@@ -13,12 +13,15 @@ constexpr auto SUM_VAR_ODATA = 2;
 constexpr auto SUM_VAR_XDATA = 3;
 
 template <typename T>
-void GPU_assess_quality(psz_summary* s, T* xdata, T* odata, size_t const len)
+void GPU_assess_quality(psz_statistics* s, T* xdata, T* odata, size_t const len)
 {
+  cudaStream_t stream;
+  cudaStreamCreate(&stream);
+
   T odata_res[4], xdata_res[4];
 
-  psz::cuhip::GPU_extrema<T>(odata, len, odata_res);
-  psz::cuhip::GPU_extrema<T>(xdata, len, xdata_res);
+  psz::module::GPU_extrema<T>(odata, len, odata_res);
+  psz::module::GPU_extrema<T>(xdata, len, xdata_res);
 
   T h_err[4];
 
@@ -32,8 +35,8 @@ void GPU_assess_quality(psz_summary* s, T* xdata, T* odata, size_t const len)
   // -----------------------------------------------------------------------------
   T max_abserr{0};
   size_t max_abserr_index{0};
-  psz::thrustgpu::GPU_max_error(
-      xdata, odata, len, max_abserr, max_abserr_index, false);
+  // psz::thrustgpu::GPU_find_max_error(xdata, odata, len, max_abserr, max_abserr_index, false);
+  psz::module::GPU_find_max_error(xdata, odata, len, max_abserr, max_abserr_index, stream);
   // -----------------------------------------------------------------------------
 
   s->len = len;
@@ -59,10 +62,12 @@ void GPU_assess_quality(psz_summary* s, T* xdata, T* odata, size_t const len)
   s->score_MSE = h_err[SUM_ERR_SQ] / len;
   s->score_NRMSE = sqrt(s->score_MSE) / s->odata.rng;
   s->score_PSNR = 20 * log10(s->odata.rng) - 10 * log10(s->score_MSE);
+
+  cudaStreamDestroy(stream);
 }
 
 }  // namespace psz::cuhip
 
 #define __INSTANTIATE_CUHIP_ASSESS(T)              \
   template void psz::cuhip::GPU_assess_quality<T>( \
-      psz_summary * s, T * xdata, T * odata, size_t const len);
+      psz_statistics * s, T * xdata, T * odata, size_t const len);

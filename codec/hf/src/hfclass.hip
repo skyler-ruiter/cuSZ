@@ -17,23 +17,19 @@
 #include "busyheader.hh"
 #include "hf/hf.hh"
 #include "hf/hfbk.hh"
-// #include "hf/hfbk.cu.hh"
+// #include "hf/cxx_hfbk_cu.h"
 #include "hf/hfcodec.hh"
-#include "mem/memobj.hh"
+#include "mem/cxx_memobj.h"
 #include "typing.hh"
 #include "utils/err.hh"
 #include "utils/format.hh"
 
-// deps
-#include "port.hh"
-
 // definitions
 #include "detail/hf_g.inl"
 
-#define HUFFCOARSE_CC(E, ETF, H, M)                   \
-  template class phf::HuffmanCodec<                  \
-      ErrCtrlTrait<E, ETF>::type, HuffTrait<H>::type, \
-      MetadataTrait<M>::type>;
+#define HUFFCOARSE_CC(E, ETF, H, M) \
+  template class phf::HuffmanCodec< \
+      ErrCtrlTrait<E, ETF>::type, HuffTrait<H>::type, MetadataTrait<M>::type>;
 
 // 23-06-04 restricted to u4 for quantization code
 

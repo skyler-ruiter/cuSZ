@@ -1,15 +1,17 @@
 #include <cstddef>
 
 #include "hfclass.hh"
-#include "mem/memobj.hh"
+#include "hfcxx_array.hh"
+#include "mem/cxx_memobj.h"
 #include "utils/err.hh"
 
 namespace phf {
 
-using namespace portable;
+template <typename T>
+using memobj = _portable::memobj<T>;
 
 template <typename E, bool TIMING>
-struct HuffmanCodec<E, TIMING>::internal_buffer {
+struct HuffmanCodec<E, TIMING>::Buf {
   // helper
   typedef struct RC {
     static const int SCRATCH = 0;
@@ -65,14 +67,8 @@ struct HuffmanCodec<E, TIMING>::internal_buffer {
     return BK_UNIT_BYTES * (2 * CELL_BITWIDTH) + SYM_BYTES * bklen;
   }
 
-  static int revbk4_bytes(int bklen)
-  {
-    return __revbk_bytes(bklen, 4, sizeof(SYM));
-  }
-  static int revbk8_bytes(int bklen)
-  {
-    return __revbk_bytes(bklen, 8, sizeof(SYM));
-  }
+  static int revbk4_bytes(int bklen) { return __revbk_bytes(bklen, 4, sizeof(SYM)); }
+  static int revbk8_bytes(int bklen) { return __revbk_bytes(bklen, 8, sizeof(SYM)); }
 
   // auxiliary
   void _debug(const std::string SYM_name, void* VAR, int SYM)
@@ -103,20 +99,17 @@ struct HuffmanCodec<E, TIMING>::internal_buffer {
   };
 
   // ctor
-  internal_buffer(
-      size_t inlen, size_t _booklen, int _pardeg, bool _use_HFR = false,
-      bool debug = false)
+  Buf(size_t inlen, size_t _booklen, int _pardeg, bool _use_HFR = false, bool debug = false)
   {
     pardeg = _pardeg;
     bklen = _booklen;
     len = inlen;
-    use_HFR  =_use_HFR;
+    use_HFR = _use_HFR;
 
     encoded = new memobj<PHF_BYTE>(len * sizeof(u4), "hf::out4B");
     scratch4 = new memobj<H4>(len, "hf::scratch4", {Malloc, MallocHost});
     bk4 = new memobj<H4>(bklen, "hf::book4", {Malloc, MallocHost});
-    revbk4 = new memobj<PHF_BYTE>(
-        revbk4_bytes(bklen), "hf::revbk4", {Malloc, MallocHost});
+    revbk4 = new memobj<PHF_BYTE>(revbk4_bytes(bklen), "hf::revbk4", {Malloc, MallocHost});
     bitstream4 = new memobj<H4>(len / 2, "hf::enc-buf", {Malloc, MallocHost});
     par_nbit = new memobj<M>(pardeg, "hf::par_nbit", {Malloc, MallocHost});
     par_ncell = new memobj<M>(pardeg, "hf::par_ncell", {Malloc, MallocHost});
@@ -126,8 +119,7 @@ struct HuffmanCodec<E, TIMING>::internal_buffer {
     if (use_HFR) {
       dn_bitstream = new memobj<H4>(len / 2, "hf::dn_bitstream", {Malloc});
       // 1 << 10 results in the max number of partitions
-      dn_bitcount = new memobj<H4>(
-          (len - 1) / (1 << 10) + 1, "hf::dn_bitcount", {Malloc});
+      dn_bitcount = new memobj<H4>((len - 1) / (1 << 10) + 1, "hf::dn_bitcount", {Malloc});
       sp_val = new memobj<E>(len / 10, "hf::sp_val", {Malloc});
       sp_idx = new memobj<M>(len / 10, "hf::sp_idx", {Malloc});
       sp_num = new memobj<M>(1, "hf::sp_num", {Malloc, MallocHost});
@@ -142,7 +134,7 @@ struct HuffmanCodec<E, TIMING>::internal_buffer {
     if (debug) debug_all();
   }
 
-  ~internal_buffer()
+  ~Buf()
   {
     delete bk4;
     delete revbk4;
@@ -161,11 +153,9 @@ struct HuffmanCodec<E, TIMING>::internal_buffer {
     }
   }
 
-  ::portable::compact_array1<E> sparse_space()
+  ::_portable::compact_array1<E> sparse_space()
   {
-    return {
-        sp_val->dptr(), sp_idx->dptr(), sp_num->dptr(), sp_num->hptr(),
-        sp_val->len()};
+    return {sp_val->dptr(), sp_idx->dptr(), sp_num->dptr(), sp_num->hptr(), sp_val->len()};
   }
 
   hfcxx_dense<H> dense_space(size_t n_chunk)
@@ -178,22 +168,17 @@ struct HuffmanCodec<E, TIMING>::internal_buffer {
     auto memcpy_start = encoded->dptr();
     auto memcpy_adjust_to_start = 0;
 
-    memcpy_helper _revbk{
-        revbk4->dptr(), revbk4->bytes(), header.entry[PHFHEADER_REVBK]};
-    memcpy_helper _par_nbit{
-        par_nbit->dptr(), par_nbit->bytes(), header.entry[PHFHEADER_PAR_NBIT]};
+    memcpy_helper _revbk{revbk4->dptr(), revbk4->bytes(), header.entry[PHFHEADER_REVBK]};
+    memcpy_helper _par_nbit{par_nbit->dptr(), par_nbit->bytes(), header.entry[PHFHEADER_PAR_NBIT]};
     memcpy_helper _par_entry{
-        par_entry->dptr(), par_entry->bytes(),
-        header.entry[PHFHEADER_PAR_ENTRY]};
+        par_entry->dptr(), par_entry->bytes(), header.entry[PHFHEADER_PAR_ENTRY]};
     memcpy_helper _bitstream{
-        bitstream4->dptr(), bitstream4->bytes(),
-        header.entry[PHFHEADER_BITSTREAM]};
+        bitstream4->dptr(), bitstream4->bytes(), header.entry[PHFHEADER_BITSTREAM]};
 
     auto start = ((uint8_t*)memcpy_start + memcpy_adjust_to_start);
     auto d2d_memcpy_merge = [&](memcpy_helper& var) {
       CHECK_GPU(cudaMemcpyAsync(
-          start + var.dst, var.ptr, var.nbyte, cudaMemcpyDeviceToDevice,
-          (cudaStream_t)stream));
+          start + var.dst, var.ptr, var.nbyte, cudaMemcpyDeviceToDevice, (cudaStream_t)stream));
     };
 
     CHECK_GPU(cudaMemcpyAsync(

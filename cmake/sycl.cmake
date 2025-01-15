@@ -1,4 +1,5 @@
 add_compile_definitions(PSZ_USE_1API)
+add_compile_definitions(_PORTABLE_USE_1API)
 
 # DPCPP 2023.2.0:
 # IntelDPCPP Config will be deprecated soon.  Use IntelSYCL config instead!
@@ -75,11 +76,9 @@ target_link_libraries(pszkernel_seq PUBLIC pszcompile_settings)
 # target_link_libraries(port_dummy PUBLIC pszcompile_settings)
 add_library(pszkernel_dp
   src/kernel/spvn.dp.cpp
-  src/kernel/l23_c.dp.cpp
-  src/kernel/l23_x.dp.cpp
-  src/kernel/l23r.dp.cpp
-
-  # # src/kernel/hist.dp.cpp  ## no proper interop
+  src/kernel/lrz_c.dp.cpp
+  src/kernel/lrz_x.dp.cpp
+  # src/kernel/hist.dp.cpp  ## no proper interop
   src/kernel/histsp.dp.cpp
   src/kernel/dryrun.dp.cpp
 )

@@ -14,7 +14,6 @@
 #include "ex_utils.hh"
 #include "kernel.hh"
 #include "mem.hh"
-#include "port.hh"
 #include "stat.hh"
 #include "typing.hh"
 
@@ -22,6 +21,19 @@
 #define OPTIM true
 
 using T = u4;
+
+template <psz_runtime policy, typename T>
+void hist(
+    bool optim, T* whole_numbers, size_t const len, uint32_t* hist,
+    size_t const bklen, float* t, cudaStream_t stream)
+{
+  if (optim)
+    psz::module::GPU_histogram_Cauchy<T>(
+        whole_numbers, len, hist, bklen, t, stream);
+  else
+    psz::module::GPU_histogram_generic<T>(
+        whole_numbers, len, hist, bklen, t, stream);
+}
 
 template <typename T>
 void real_data_test(size_t len, size_t bklen, string fname)
@@ -42,10 +54,10 @@ void real_data_test(size_t len, size_t bklen, string fname)
   hist<SEQ, T>(BASE, wn->hptr(), len, bs->hptr(), bklen, &tbs, stream);
   hist<SEQ, T>(OPTIM, wn->hptr(), len, os->hptr(), bklen, &tos, stream);
 
-  hist<PROPER_GPU_BACKEND, T>(
+  hist<PROPER_RUNTIME, T>(
       BASE, wn->dptr(), len, bg->dptr(), bklen, &tbg, stream),
       bg->control({D2H});
-  hist<PROPER_GPU_BACKEND, T>(
+  hist<PROPER_RUNTIME, T>(
       OPTIM, wn->dptr(), len, og->dptr(), bklen, &tog, stream),
       og->control({D2H});
 
@@ -116,7 +128,7 @@ void dummy_data_test()
   float tbs, tos, tbg, tog;
 
   hist<SEQ, T>(OPTIM, wn->hptr(), len, serial->hptr(), bklen, &tos, stream);
-  hist<PROPER_GPU_BACKEND, T>(
+  hist<PROPER_RUNTIME, T>(
       OPTIM, wn->dptr(), len, gpu->dptr(), bklen, &tog, stream);
   gpu->control({D2H});
 

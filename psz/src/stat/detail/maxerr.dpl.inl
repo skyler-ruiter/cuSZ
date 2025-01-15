@@ -5,13 +5,12 @@
 #include <sycl/sycl.hpp>
 
 #include "cusz/type.h"
-#include "port.hh"
 #include "stat/compare.hh"
 
 namespace psz::dpl {
 
 template <typename T>
-void GPU_max_error(
+void GPU_find_max_error(
     T* reconstructed,     // in
     T* original,          // in
     size_t len,           // in
@@ -37,9 +36,7 @@ void GPU_max_error(
   dpct::device_pointer<T> o(original);
   dpct::device_pointer<T> d(diff);
 
-  std::transform(
-      oneapi::dpl::execution::make_device_policy(q_ct1), r, r + len, o, d,
-      expr);
+  std::transform(oneapi::dpl::execution::make_device_policy(q_ct1), r, r + len, o, d, expr);
 
   auto maximum_ptr = std::max_element(oneapi::dpl::execution::seq, d, d + len);
   maximum_val = *maximum_ptr;
@@ -51,4 +48,4 @@ void GPU_max_error(
 }  // namespace psz::dpl
 
 #define __INSTANTIATE_DPL_MAXERR(T) \
-  template void psz::dpl::GPU_max_error<T>(T*, T*, size_t, T&, size_t&, bool);
+  template void psz::dpl::GPU_find_max_error<T>(T*, T*, size_t, T&, size_t&, bool);

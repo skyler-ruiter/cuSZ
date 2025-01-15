@@ -1,4 +1,5 @@
 add_compile_definitions(PSZ_USE_CUDA)
+add_compile_definitions(_PORTABLE_USE_CUDA)
 
 find_package(CUDAToolkit REQUIRED)
 
@@ -23,6 +24,7 @@ target_compile_features(psz_cu_compile_settings INTERFACE cxx_std_17 cuda_std_17
 target_include_directories(
   psz_cu_compile_settings
   INTERFACE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/portable/include/>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/psz/src/>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/psz/include/>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/codec/hf/include/>
@@ -44,6 +46,7 @@ if(PSZ_REACTIVATE_THRUSTGPU)
   add_library(psz_cu_stat
     psz/src/stat/compare.stl.cc
     psz/src/stat/identical/all.thrust.cu
+    psz/src/stat/identical/all.cu
     psz/src/stat/extrema/f4.cu
     psz/src/stat/extrema/f8.cu
     psz/src/stat/extrema/f4.thrust.cu
@@ -55,21 +58,21 @@ if(PSZ_REACTIVATE_THRUSTGPU)
     psz/src/stat/assess/f4.thrust.cu
     psz/src/stat/assess/f8.thrust.cu
     psz/src/stat/maxerr/f4.thrust.cu
-    psz/src/stat/maxerr/f8.thrust.cu)
+    psz/src/stat/maxerr/f8.thrust.cu
+    psz/src/stat/maxerr/max_err.cu
+  )
 else()
   add_library(psz_cu_stat
     psz/src/stat/compare.stl.cc
-    psz/src/stat/identical/all.thrust.cu
+    psz/src/stat/identical/all.cu
     psz/src/stat/extrema/f4.cu
     psz/src/stat/extrema/f8.cu
     psz/src/stat/calcerr/f4.cu
     psz/src/stat/calcerr/f8.cu
     psz/src/stat/assess/f4.cu
     psz/src/stat/assess/f8.cu
-    psz/src/stat/assess/f4.thrust.cu
-    psz/src/stat/assess/f8.thrust.cu
-    psz/src/stat/maxerr/f4.thrust.cu
-    psz/src/stat/maxerr/f8.thrust.cu)
+    psz/src/stat/maxerr/max_err.cu
+  )
 endif()
 
 target_link_libraries(psz_cu_stat
@@ -80,28 +83,26 @@ add_library(PSZ::CUDA::stat ALIAS psz_cu_stat)
 add_library(CUSZ::stat ALIAS psz_cu_stat)
 
 # FUNC={core,api}, BACKEND={serial,cuda,...}
+add_library(psz_seq_core
+  psz/src/kernel/lrz.seq.cc
+  psz/src/kernel/hist_generic.seq.cc
+  psz/src/kernel/histsp.seq.cc
+  psz/src/kernel/spvn.seq.cc
+)
+target_link_libraries(psz_seq_core
+  PUBLIC
+  psz_cu_compile_settings
+)
+
 add_library(psz_cu_core
-  psz/src/kernel/l23.seq.cc
-  psz/src/kernel/hist_compat.seq.cc
-  psz/src/kernel/hist_compat.cu
-  psz/src/kernel/histsp_compat.seq.cc
-  psz/src/kernel/histsp_compat.cu
-
-  # psz/src/kernel/spvn.seq.cc
-  psz/src/kernel/dryrun.cu
-  psz/src/kernel/lproto_c.cu
-  psz/src/kernel/lproto_x.cu
+  psz/src/kernel/hist_generic.cu
+  psz/src/kernel/histsp.cu
+  psz/src/kernel/proto_lrz_c.cu
+  psz/src/kernel/proto_lrz_x.cu
   psz/src/kernel/spvn.cu
-  psz/src/kernel/l23_c.cu
-  psz/src/kernel/l23_x.cu
+  psz/src/kernel/lrz_c.cu
+  psz/src/kernel/lrz_x.cu
   psz/src/kernel/spline3.cu
-
-  # psz/src/module/lrz.cc
-  # psz/src/module/lrz_cxx.cu
-  # psz/src/module/spl_cxx.cu
-  # psz/src/module/hist_cxx.cu
-  # psz/src/module/scatter_cxx.cu
-  # psz/src/kernel/spv.cu # a thrust impl
 )
 target_link_libraries(psz_cu_core
   PUBLIC
@@ -113,10 +114,10 @@ add_library(PSZ::CUDA::core ALIAS psz_cu_core)
 add_library(CUSZ::core ALIAS psz_cu_core)
 
 add_library(psz_cu_mem
-  psz/src/mem/memobj.f.cc
-  psz/src/mem/memobj.i.cc
-  psz/src/mem/memobj.u.cc
-  psz/src/mem/memobj.misc.cc)
+  portable/src/mem/memobj.f.cc
+  portable/src/mem/memobj.i.cc
+  portable/src/mem/memobj.u.cc
+  portable/src/mem/memobj.misc.cc)
 add_library(CUSZ::mem ALIAS psz_cu_mem)
 add_library(PSZ::cu_mem ALIAS psz_cu_mem)
 target_link_libraries(psz_cu_mem
@@ -134,8 +135,6 @@ add_library(psz_cu_utils
   psz/src/utils/verinfo_nv.cu
   psz/src/utils/vis_stat.cc
   psz/src/utils/context.cc
-  psz/src/utils/timer_cpu.cc
-  psz/src/utils/timer_gpu.cc
   psz/src/utils/header.c
 )
 target_link_libraries(psz_cu_utils
@@ -180,7 +179,6 @@ add_library(CUSZ::fzg ALIAS psz_cu_fzg)
 
 add_library(cusz
   psz/src/pipeline/compressor.cc
-  psz/src/log/sanitize.cc
   psz/src/libcusz.cc
 )
 target_link_libraries(cusz
@@ -281,6 +279,7 @@ endif()
 # install libs
 install(TARGETS psz_cu_compile_settings EXPORT CUSZTargets)
 install(TARGETS
+  psz_seq_core
   psz_cu_core
   psz_cu_stat
   psz_cu_mem
@@ -328,6 +327,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/CUSZConfig.cmake"
 
 # install headers
 install(DIRECTORY
+  portable/include/
   psz/include/
   codec/hf/include/
   codec/fzg/include/

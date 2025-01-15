@@ -14,9 +14,10 @@
 #ifndef CUSZ_KERNEL_CODEC_HUFFMAN_CUH
 #define CUSZ_KERNEL_CODEC_HUFFMAN_CUH
 
+#include <cstdio>
+
 #include "hfclass.hh"  // contains HuffmanHelper; TODO put in another file
 #include "hfword.hh"
-#include "utils/config.hh"
 
 #define TIX threadIdx.x
 #define BIX blockIdx.x
@@ -28,22 +29,13 @@ extern __shared__ char __codec_raw[];
 
 namespace {
 struct helper {
-  __device__ __forceinline__ static unsigned int local_tid_1()
-  {
-    return threadIdx.x;
-  }
+  __device__ __forceinline__ static unsigned int local_tid_1() { return threadIdx.x; }
   __device__ __forceinline__ static unsigned int global_tid_1()
   {
     return blockIdx.x * blockDim.x + threadIdx.x;
   }
-  __device__ __forceinline__ static unsigned int block_stride_1()
-  {
-    return blockDim.x;
-  }
-  __device__ __forceinline__ static unsigned int grid_stride_1()
-  {
-    return blockDim.x * gridDim.x;
-  }
+  __device__ __forceinline__ static unsigned int block_stride_1() { return blockDim.x; }
+  __device__ __forceinline__ static unsigned int grid_stride_1() { return blockDim.x * gridDim.x; }
   template <int SEQ>
   __device__ __forceinline__ static unsigned int global_tid()
   {
@@ -62,7 +54,7 @@ namespace phf::experimental {
 
 // a duplicate from psz
 template <typename T, typename M = u4>
-__global__ void KERNEL_CUHIP_scatter_adhoc(T* val, M* idx, int const n, T* out)
+__global__ void KERNEL_CUHIP_scatter(T* val, M* idx, int const n, T* out)
 {
   auto tid = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -78,8 +70,7 @@ template <typename E, typename H>
 __global__ void KERNEL_CUHIP_encode_phase1_fill_with_filter(
     /* input */ E* in, size_t const in_len, H* in_bk, int const in_bklen,
     H const replacement,  //
-    /* output */ H* encoded, E* outlier_val, uint32_t* outlier_idx,
-    uint32_t* outlier_num)
+    /* output */ H* encoded, E* outlier_val, uint32_t* outlier_idx, uint32_t* outlier_num)
 {
   auto s_bk = reinterpret_cast<uint32_t*>(__codec_raw);
 
@@ -91,8 +82,7 @@ __global__ void KERNEL_CUHIP_encode_phase1_fill_with_filter(
 
   __syncthreads();
 
-  for (auto idx = helper::global_tid_1(); idx < in_len;
-       idx += helper::grid_stride_1()) {
+  for (auto idx = helper::global_tid_1(); idx < in_len; idx += helper::grid_stride_1()) {
     auto candidate = s_bk[(int)in[idx]];
     auto pw4 = reinterpret_cast<HuffmanWord<4>*>(&candidate);
 
@@ -101,8 +91,7 @@ __global__ void KERNEL_CUHIP_encode_phase1_fill_with_filter(
       auto atomic_old_loc = atomicAdd(outlier_num, 1);
       outlier_val[atomic_old_loc] = in[idx];
       outlier_idx[atomic_old_loc] = idx;
-      printf(
-          "inside kernel; hf outlier; atomic_old_loc: %d\n", atomic_old_loc);
+      printf("inside kernel; hf outlier; atomic_old_loc: %d\n", atomic_old_loc);
     }
     else {
       encoded[idx] = candidate;
@@ -112,8 +101,8 @@ __global__ void KERNEL_CUHIP_encode_phase1_fill_with_filter(
 
 template <typename E, typename H, typename M = uint32_t>
 __global__ void KERNEL_CUHIP_encode_phase1_fill_collect_metadata(
-    E* in, size_t const in_len, H* in_bk, int const in_bklen, int const sublen,
-    int const pardeg, int const repeat, H* encoded, M* par_nbit, M* par_ncell)
+    E* in, size_t const in_len, H* in_bk, int const in_bklen, int const sublen, int const pardeg,
+    int const repeat, H* encoded, M* par_nbit, M* par_ncell)
 {
   using PW = HuffmanWord<sizeof(H)>;
   auto s_bk = reinterpret_cast<H*>(__codec_raw);
@@ -121,9 +110,7 @@ __global__ void KERNEL_CUHIP_encode_phase1_fill_collect_metadata(
   __shared__ uint32_t nbit;
 
   // load codebook
-  for (auto i = threadIdx.x; i < in_bklen; i += blockDim.x) {
-    s_bk[i] = in_bk[i];
-  }
+  for (auto i = threadIdx.x; i < in_bklen; i += blockDim.x) { s_bk[i] = in_bk[i]; }
   __syncthreads();
 
   for (auto n = 0; n < repeat; n++) {
@@ -159,58 +146,6 @@ __global__ void KERNEL_CUHIP_encode_phase1_fill_collect_metadata(
 
 namespace phf {
 
-// TODO change size_t to unsigned int
-template <typename H, typename E>
-__device__ void SUBR_CUHIP_decode_single_thread_inflate(
-    H* input, E* out, int const total_bw, BYTE* revbook)
-{
-  constexpr auto CELL_BITWIDTH = sizeof(H) * 8;
-
-  int next_bit;
-  auto idx_bit = 0;
-  auto idx_byte = 0;
-  auto idx_out = 0;
-
-  H bufr = input[idx_byte];
-
-  auto first = reinterpret_cast<H*>(revbook);
-  auto entry = first + CELL_BITWIDTH;
-  auto keys = reinterpret_cast<E*>(revbook + sizeof(H) * (2 * CELL_BITWIDTH));
-  H v = (bufr >> (CELL_BITWIDTH - 1)) & 0x1;  // get the first bit
-  auto l = 1;
-  auto i = 0;
-
-  while (i < total_bw) {
-    while (v < first[l]) {  // append next i_cb bit
-      ++i;
-      idx_byte = i / CELL_BITWIDTH;  // [1:exclusive]
-      idx_bit = i % CELL_BITWIDTH;
-      if (idx_bit == 0) {
-        // idx_byte += 1; // [1:exclusive]
-        bufr = input[idx_byte];
-      }
-
-      next_bit = ((bufr >> (CELL_BITWIDTH - 1 - idx_bit)) & 0x1);
-      v = (v << 1) | next_bit;
-      ++l;
-    }
-    out[idx_out++] = keys[entry[l] + v - first[l]];
-    {
-      ++i;
-      idx_byte = i / CELL_BITWIDTH;  // [2:exclusive]
-      idx_bit = i % CELL_BITWIDTH;
-      if (idx_bit == 0) {
-        // idx_byte += 1; // [2:exclusive]
-        bufr = input[idx_byte];
-      }
-
-      next_bit = ((bufr >> (CELL_BITWIDTH - 1 - idx_bit)) & 0x1);
-      v = 0x0 | next_bit;
-    }
-    l = 1;
-  }
-}
-
 template <typename E, typename H>
 __global__ void KERNEL_CUHIP_encode_phase1_fill(
     E* in, size_t const in_len, H* in_bk, int const in_bklen, H* out_encoded)
@@ -234,8 +169,8 @@ __global__ void KERNEL_CUHIP_encode_phase1_fill(
 
 template <typename H, typename M>
 __global__ void KERNEL_CUHIP_encode_phase2_deflate(
-    H* inout_inplace, size_t const len, M* par_nbit, M* par_ncell,
-    int const sublen, int const pardeg)
+    H* inout_inplace, size_t const len, M* par_nbit, M* par_ncell, int const sublen,
+    int const pardeg)
 {
   constexpr int CELL_BITWIDTH = sizeof(H) * 8;
 
@@ -253,8 +188,7 @@ __global__ void KERNEL_CUHIP_encode_phase2_deflate(
       if (did == len) break;
 
       H packed_word = inout_inplace[tid * sublen + i];
-      auto word_ptr =
-          reinterpret_cast<struct HuffmanWord<sizeof(H)>*>(&packed_word);
+      auto word_ptr = reinterpret_cast<struct HuffmanWord<sizeof(H)>*>(&packed_word);
       word_width = word_ptr->bitcount;
       word_ptr->bitcount = (uint8_t)0x0;
 
@@ -308,27 +242,72 @@ __global__ void KERNEL_CUHIP_encode_phase4_concatenate(
   }
 }
 
+}  // namespace phf
+
+namespace phf {
+
 template <typename E, typename H, typename M>
-__global__ void KERNEL_CUHIP_decode_kernel(
-    H* in, uint8_t* revbook, M* par_nbit, M* par_entry,
-    int const revbook_nbyte, int const sublen, int const pardeg, E* out)
+__global__ void KERNEL_CUHIP_HF_decode(
+    H* in, uint8_t* revbook, M* par_nbit, M* par_entry, int const revbook_nbyte, int const sublen,
+    int const pardeg, E* out)
 {
-  extern __shared__ uint8_t shmem[];
+  constexpr auto CELL_BITWIDTH = sizeof(H) * 8;
+  extern __shared__ uint8_t s_revbook[];
   constexpr auto block_dim = phf::HuffmanHelper::BLOCK_DIM_DEFLATE;
+
+  auto single_thread_inflate = [&](H* input, E* out, int const total_bw) {
+    int next_bit;
+    auto idx_bit = 0, idx_byte = 0, idx_out = 0;
+    H bufr = input[idx_byte];
+    auto first = (H*)(s_revbook);
+    auto entry = first + CELL_BITWIDTH;
+    auto keys = (E*)(s_revbook + sizeof(H) * (2 * CELL_BITWIDTH));
+    H v = (bufr >> (CELL_BITWIDTH - 1)) & 0x1;  // get the first bit
+    auto l = 1, i = 0;
+
+    while (i < total_bw) {
+      while (v < first[l]) {  // append next i_cb bit
+        ++i;
+        idx_byte = i / CELL_BITWIDTH;  // [1:exclusive]
+        idx_bit = i % CELL_BITWIDTH;
+        if (idx_bit == 0) {
+          // idx_byte += 1; // [1:exclusive]
+          bufr = input[idx_byte];
+        }
+
+        next_bit = ((bufr >> (CELL_BITWIDTH - 1 - idx_bit)) & 0x1);
+        v = (v << 1) | next_bit;
+        ++l;
+      }
+      out[idx_out++] = keys[entry[l] + v - first[l]];
+      {
+        ++i;
+        idx_byte = i / CELL_BITWIDTH;  // [2:exclusive]
+        idx_bit = i % CELL_BITWIDTH;
+        if (idx_bit == 0) {
+          // idx_byte += 1; // [2:exclusive]
+          bufr = input[idx_byte];
+        }
+
+        next_bit = ((bufr >> (CELL_BITWIDTH - 1 - idx_bit)) & 0x1);
+        v = 0x0 | next_bit;
+      }
+      l = 1;
+    }
+  };
 
   auto R = (revbook_nbyte - 1 + block_dim) / block_dim;
 
   for (auto i = 0; i < R; i++) {
     if (TIX + i * block_dim < revbook_nbyte)
-      shmem[TIX + i * block_dim] = revbook[TIX + i * block_dim];
+      s_revbook[TIX + i * block_dim] = revbook[TIX + i * block_dim];
   }
   __syncthreads();
 
   auto gid = BIX * BDX + TIX;
 
   if (gid < pardeg) {
-    SUBR_CUHIP_decode_single_thread_inflate(
-        in + par_entry[gid], out + sublen * gid, par_nbit[gid], shmem);
+    single_thread_inflate(in + par_entry[gid], out + sublen * gid, par_nbit[gid]);
     __syncthreads();
   }
 }

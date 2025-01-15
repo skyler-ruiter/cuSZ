@@ -14,22 +14,16 @@
 
 #include <memory>
 
-#include "cusz/type.h"
 #include "hf.h"
-#include "hfcxx_array.hh"
-#include "hfword.hh"
-#include "mem/memobj.hh"
 
 namespace phf {
-
-using namespace portable;
 
 template <typename E, bool TIMING = true>
 class HuffmanCodec {
  private:
   using SYM = E;
 
-  struct internal_buffer;
+  struct Buf;
   struct impl;
   std::unique_ptr<impl> pimpl;
 
@@ -58,11 +52,6 @@ class HuffmanCodec {
   HuffmanCodec* decode(PHF_BYTE*, E*, phf_stream_t, bool = true);
   HuffmanCodec* clear_buffer();
   HuffmanCodec* dump_internal_data(std::string, std::string);
-
-  // analysis
-  void calculate_CR(
-      memobj<E>* ectrl, memobj<u4>* freq, szt sizeof_dtype = 4,
-      szt overhead_bytes = 0);
 };
 
 struct HuffmanHelper {

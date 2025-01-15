@@ -21,34 +21,27 @@
 #include "exception/exception.hh"
 #include "hfclass.hh"
 #include "kernel.hh"
-#include "log.hh"
 #include "module/cxx_module.hh"
-#include "port.hh"
-#include "utils/config.hh"
 #include "utils/err.hh"
 #include "utils/timer.hh"
 
-#define COLLECT_TIME(NAME, TIME) \
-  timerecord.push_back({const_cast<const char*>(NAME), TIME});
+#define COLLECT_TIME(NAME, TIME) timerecord.push_back({const_cast<const char*>(NAME), TIME});
 
 void concate_memcpy_d2d(
-    void* dst, void* src, size_t nbyte, void* stream, const char* _file_,
-    const int _line_)
+    void* dst, void* src, size_t nbyte, void* stream, const char* _file_, const int _line_)
 {
   if (nbyte != 0) {
 #if defined(PSZ_USE_CUDA) || defined(PSZ_USE_HIP)
     AD_HOC_CHECK_GPU_WITH_LINE(
-        cudaMemcpyAsync(
-            dst, src, nbyte, cudaMemcpyDeviceToDevice, (cudaStream_t)stream),
-        _file_, _line_);
+        cudaMemcpyAsync(dst, src, nbyte, cudaMemcpyDeviceToDevice, (cudaStream_t)stream), _file_,
+        _line_);
 #elif defined(PSZ_USE_1API)
     ((sycl::queue*)stream)->memcpy(dst(FIELD), src, nbyte);
 #endif
   }
 }
 
-#define DST(FIELD, OFFSET) \
-  ((void*)(mem->compressed() + header.entry[FIELD] + OFFSET))
+#define DST(FIELD, OFFSET) ((void*)(mem->compressed() + header.entry[FIELD] + OFFSET))
 
 #define SKIP_ON_FAILURE \
   if (not error_list.empty()) return this;
@@ -125,59 +118,33 @@ struct Compressor<C>::impl {
     else if (ctx->codec1_type == FZGPUCodec)
       codec_fzg = new CodecFZG(mem->len);
     else {
-      throw std::runtime_error(
-          "[psz] codec other than Huffman or FZGPUCodec is not supported.");
+      throw std::runtime_error("[psz] codec other than Huffman or FZGPUCodec is not supported.");
     }
   }
 
   void compress_predict(pszctx* ctx, T* in, void* stream)
   try {
-    /* prediction-quantization with compaction */
-#if defined(PSZ_USE_CUDA) || defined(PSZ_USE_HIP)
+    auto len3 = MAKE_GPU_LEN3(ctx->x, ctx->y, ctx->z);
+    auto stride3 = MAKE_GPU_LEN3(1, ctx->x, ctx->x * ctx->y);
+    auto len3_std = MAKE_STD_LEN3(ctx->x, ctx->y, ctx->z);
 
-    auto len3 = dim3(ctx->x, ctx->y, ctx->z);
-
-    if (ctx->pred_type == Lorenzo) {
-      psz::cuhip::GPU_c_lorenzo_nd_with_outlier<T, false, E>(
-          in, dim3(ctx->x, ctx->y, ctx->z), mem->_ectrl->dptr(),
-          (void*)mem->outlier(), ctx->eb, ctx->radius, &time_pred, stream);
-
-      PSZDBG_LOG("interp: done");
-      PSZDBG_PTR_WHERE(mem->ectrl());
-      PSZDBG_VAR("pipeline", len);
-      PSZSANITIZE_QUANTCODE(mem->_ectrl->control({D2H})->hptr(), len, booklen);
-    }
-    else if (ctx->pred_type == LorenzoZigZag) {
-      psz::cuhip::GPU_c_lorenzo_nd_with_outlier<T, true, E>(
-          in, dim3(ctx->x, ctx->y, ctx->z), mem->_ectrl->dptr(),
-          (void*)mem->outlier(), ctx->eb, ctx->radius, &time_pred, stream);
-    }
-    else if (ctx->pred_type == LorenzoProto) {
-      psz::cuhip::GPU_PROTO_c_lorenzo_nd_with_outlier<T, E>(
-          in, dim3(ctx->x, ctx->y, ctx->z), mem->_ectrl->dptr(),
-          (void*)mem->outlier(), ctx->eb, ctx->radius, &time_pred, stream);
-    }
-    else if (ctx->pred_type == Spline) {
-#if defined(PSZ_USE_CUDA)
-      memobj<T> local_spline_in(
-          ctx->x, ctx->y, ctx->z, "local pszmem for spline input");
-      local_spline_in.dptr(in);
-
-      pszcxx_predict_spline(
-          &local_spline_in, mem->_anchor, mem->_ectrl, (void*)mem->compact,
+    if (ctx->pred_type == Lorenzo)
+      psz::module::GPU_c_lorenzo_nd_with_outlier<T, false, E>(
+          in, len3_std, mem->ectrl(), (void*)mem->outlier(), ctx->eb, ctx->radius, &time_pred,
+          stream);
+    else if (ctx->pred_type == LorenzoZigZag)
+      psz::module::GPU_c_lorenzo_nd_with_outlier<T, true, E>(
+          in, len3_std, mem->ectrl(), (void*)mem->outlier(), ctx->eb, ctx->radius, &time_pred,
+          stream);
+    else if (ctx->pred_type == LorenzoProto)
+      psz::module::GPU_PROTO_c_lorenzo_nd_with_outlier<T, E>(
+          in, len3_std, mem->ectrl(), (void*)mem->outlier(), ctx->eb, ctx->radius, &time_pred,
+          stream);
+    else if (ctx->pred_type == Spline)
+      psz::cuhip::GPU_predict_spline(
+          in, len3, stride3, mem->ectrl(), mem->_ectrl->len3(), mem->_ectrl->stride3(),
+          mem->anchor(), mem->_anchor->len3(), mem->_anchor->stride3(), (void*)mem->compact,
           ctx->eb, ctx->radius, &time_pred, stream);
-#else
-      throw runtime_error(
-          "[psz::error] psz::pred == spline not implemented in non-CUDA.");
-#endif
-    }
-
-#elif defined(PSZ_USE_1API)
-
-    auto len3 = sycl::range<3>(ctx->z, ctx->y, ctx->x);
-    // TODO
-
-#endif
 
     /* make outlier count seen on host */
     mem->compact->make_host_accessible((cudaStream_t)stream);
@@ -190,65 +157,31 @@ struct Compressor<C>::impl {
     error_list.push_back(PSZ_ERROR_OUTLIER_OVERFLOW);
   }
 
-  // [psz::note] pszcxx_histogram_generic is left for evaluating purpose
-  // compared to pszcxx_histogram_cauchy
-  // 241024 note the backend completion.
-
-#if defined(PSZ_USE_CUDA) || defined(PSZ_USE_1API)
-#define PSZ_HIST(...) \
-  pszcxx_compat_histogram_cauchy<PROPER_GPU_BACKEND, E>(__VA_ARGS__);
-#elif defined(PSZ_USE_HIP)
-#define PSZ_HIST(...) \
-  pszcxx_compat_histogram_generic<PROPER_GPU_BACKEND, E>(__VA_ARGS__);
-#endif
-
   void compress_histogram(pszctx* ctx, void* stream)
   {
-    if (ctx->hist_type == psz_histogramtype::HistogramDefault) {
 #if defined(PSZ_USE_CUDA) || defined(PSZ_USE_1API)
 
-      pszcxx_compat_histogram_cauchy<PROPER_GPU_BACKEND, E>(
+    if (ctx->hist_type == psz_histogramtype::HistogramSparse)
+      psz::module::GPU_histogram_Cauchy<E>(
+          mem->ectrl(), len, mem->hist(), ctx->dict_size, &time_hist, stream);
+    else if (ctx->hist_type == psz_histogramtype::HistogramGeneric)
+      psz::module::GPU_histogram_generic<E>(
           mem->ectrl(), len, mem->hist(), ctx->dict_size, &time_hist, stream);
 
 #elif defined(PSZ_USE_HIP)
-      // not implemented
+    // not implemented
 #endif
-    }
-    else if (ctx->hist_type == psz_histogramtype::HistogramGeneric) {
-      pszcxx_compat_histogram_generic<PROPER_GPU_BACKEND, E>(
-          mem->ectrl(), len, mem->hist(), ctx->dict_size, &time_hist, stream);
-    }
-    else {
-      // do nothing
-    }
   }
 
   void compress_encode(pszctx* ctx, void* stream)
   {
     if (ctx->codec1_type == Huffman) {
       codec_hf->buildbook(mem->_hist->dptr(), stream);
-      // [TODO] CR estimation must be after building codebook; need a flag.
-      if (ctx->report_cr_est) {
-        codec_hf->calculate_CR(
-            mem->_ectrl, mem->_hist, sizeof(T),
-            (sizeof(T) * mem->_anchor->len()) * (ctx->pred_type == Spline));
-      }
-      PSZDBG_LOG("codebook: done");
-      // PSZSANITIZE_HIST_BK(mem->_hist->hptr(), codec->bk4->hptr(), booklen);
-
-      codec_hf->encode(
-          mem->ectrl(), len, &comp_codec_out, &comp_codec_outlen, stream);
+      codec_hf->encode(mem->ectrl(), len, &comp_codec_out, &comp_codec_outlen, stream);
     }
     else if (ctx->codec1_type == FZGPUCodec) {
-      codec_fzg->encode(
-          mem->ectrl(), len, &comp_codec_out, &comp_codec_outlen, stream);
+      codec_fzg->encode(mem->ectrl(), len, &comp_codec_out, &comp_codec_outlen, stream);
     }
-    else {
-      throw std::runtime_error(
-          "[psz] codec other than Huffman or FZGPUCodec is not supported.");
-    }
-
-    PSZDBG_LOG("encoding done");
   }
 
   void compress_encode_use_prebuilt(pszctx* ctx, void* stream)
@@ -256,11 +189,8 @@ struct Compressor<C>::impl {
     throw psz::exception_placeholder();
   }
 
-  void compress_merge_update_header(
-      pszctx* ctx, BYTE** out, szt* outlen, void* stream)
+  void compress_merge_update_header(pszctx* ctx, BYTE** out, szt* outlen, void* stream)
   try {
-    // SKIP_ON_FAILURE;
-
     auto splen = mem->compact->num_outliers();
     auto pred_type = ctx->pred_type;
 
@@ -281,8 +211,6 @@ struct Compressor<C>::impl {
     concate_memcpy_d2d(DST(SPFMT, sizeof(T) * splen), mem->compact_idx(), sizeof(M) * splen, stream, __FILE__, __LINE__);
     // clang-format on
 
-    PSZDBG_LOG("merge buf: done");
-
     // update header::metadata (.w is placeheld.)
     header.x = ctx->x, header.y = ctx->y, header.z = ctx->z, header.w = 1;
     header.splen = ctx->splen;
@@ -295,12 +223,9 @@ struct Compressor<C>::impl {
     header.hist_type = ctx->hist_type;
     header.codec1_type = ctx->codec1_type;
 
-    PSZDBG_LOG("update header: done");
-
     /* output of this function */
-    *out = mem->_compressed->dptr();
+    *out = mem->compressed();
     *outlen = pszheader_filesize(&header);
-    mem->_compressed->set_len(*outlen);
   }
 #if defined(PSZ_USE_CUDA) || defined(PSZ_USE_HIP)
   catch (const psz ::exception_gpu_general& e) {
@@ -310,76 +235,45 @@ struct Compressor<C>::impl {
 #endif
 #if defined(PSZ_USE_1API)
   catch (sycl::exception const& exc) {
-    std::cerr << exc.what() << "Exception caught at file:" << __FILE__
-              << ", line:" << __LINE__ << std::endl;
+    std::cerr << exc.what() << "Exception caught at file:" << __FILE__ << ", line:" << __LINE__
+              << std::endl;
   }
 #endif
 
-  void decompress_predict(
-      psz_header* header, BYTE* in, T* ext_anchor, T* out, psz_stream_t stream)
+  void decompress_predict(psz_header* header, BYTE* in, T* ext_anchor, T* out, psz_stream_t stream)
   {
     auto access = [&](int FIELD, szt offset_nbyte = 0) {
       return (void*)(in + header->entry[FIELD] + offset_nbyte);
     };
 
     if (in and ext_anchor)
-      throw std::runtime_error(
-          "[psz::error] One of external in and ext_anchor must be null.");
+      throw std::runtime_error("[psz::error] One of external in and ext_anchor must be null.");
 
     auto d_anchor = ext_anchor ? ext_anchor : (T*)access(ANCHOR);
-    // wire and aliasing
-    auto d_space = out, d_xdata = out;
+    auto d_space = out, d_xdata = out;  // aliases
 
-    auto _adhoc_pszlen = psz_len3{header->x, header->y, header->z};
-    auto _adhoc_linear = header->z * header->y * header->x;
+    auto len3 = MAKE_GPU_LEN3(header->x, header->y, header->z);
+    auto stride3 = MAKE_GPU_LEN3(1, header->x, header->x * header->y);
+    auto len3_std = MAKE_STD_LEN3(header->x, header->y, header->z);
 
-#if defined(PSZ_USE_CUDA) || defined(PSZ_USE_HIP)
-
-    auto len3 = dim3(header->x, header->y, header->z);
-
-    if (header->pred_type == Lorenzo) {
-      psz::cuhip::GPU_x_lorenzo_nd<T, false, E>(
-          mem->ectrl(), d_space, d_xdata,
-          dim3(header->x, header->y, header->z), header->eb, header->radius,
-          &time_pred, stream);
-    }
-    else if (header->pred_type == LorenzoZigZag) {
-      psz::cuhip::GPU_x_lorenzo_nd<T, true, E>(
-          mem->ectrl(), d_space, d_xdata,
-          dim3(header->x, header->y, header->z), header->eb, header->radius,
-          &time_pred, stream);
-    }
-    else if (header->pred_type == LorenzoProto) {
-      psz::cuhip::GPU_PROTO_x_lorenzo_nd<T, E>(
-          mem->ectrl(), d_space, d_xdata,
-          dim3(header->x, header->y, header->z), header->eb, header->radius,
-          &time_pred, stream);
-    }
-    else if (header->pred_type == Spline) {
-#ifdef PSZ_USE_CUDA
-      auto __xdata =
-          new memobj<T>(header->x, header->y, header->z, "__xdata", {});
-      __xdata->dptr(out);
-
-      auto aclen3 = mem->_anchor->len3();
-      memobj<T> anchor(aclen3.x, aclen3.y, aclen3.z);
-      anchor.dptr(d_anchor);
-
-      pszcxx_reverse_predict_spline(
-          &anchor, mem->_ectrl, __xdata, header->eb, header->radius,
-          &time_pred, stream);
-#else
-      throw runtime_error(
-          "[psz::error] psz::pred == spline not implemented in non-CUDA.");
-#endif
-    }
-
-#elif defined(PSZ_USE_1API)
-
-    auto len3 = sycl::range<3>(header->z, header->y, header->x);
-    // TODO
-
-#endif
+    if (header->pred_type == Lorenzo)
+      psz::module::GPU_x_lorenzo_nd<T, false, E>(
+          mem->ectrl(), d_space, d_xdata, len3_std, header->eb, header->radius, &time_pred,
+          stream);
+    else if (header->pred_type == LorenzoZigZag)
+      psz::module::GPU_x_lorenzo_nd<T, true, E>(
+          mem->ectrl(), d_space, d_xdata, len3_std, header->eb, header->radius, &time_pred,
+          stream);
+    else if (header->pred_type == LorenzoProto)
+      psz::module::GPU_PROTO_x_lorenzo_nd<T, E>(
+          mem->ectrl(), d_space, d_xdata, len3_std, header->eb, header->radius, &time_pred,
+          stream);
+    else if (header->pred_type == Spline)
+      psz::cuhip::GPU_reverse_predict_spline(
+          mem->ectrl(), mem->_ectrl->len3(), mem->_ectrl->stride3(),  //
+          d_anchor, mem->_anchor->len3(), mem->_anchor->stride3(),    //
+          d_xdata, len3, stride3,                                     //
+          header->eb, header->radius, &time_pred, stream);
   }
 
   void decompress_decode(psz_header* header, BYTE* in, psz_stream_t stream)
@@ -392,17 +286,14 @@ struct Compressor<C>::impl {
     }
     else if (header->codec1_type == FZGPUCodec) {
       codec_fzg->decode(
-          (B*)access(ENCODED), pszheader_filesize(header), mem->ectrl(),
-          mem->len, stream);
+          (B*)access(ENCODED), pszheader_filesize(header), mem->ectrl(), mem->len, stream);
     }
     else {
-      throw std::runtime_error(
-          "[psz] codec other than Huffman or FZGPUCodec is not supported.");
+      throw std::runtime_error("[psz] codec other than Huffman or FZGPUCodec is not supported.");
     }
   }
 
-  void decompress_scatter(
-      psz_header* header, BYTE* in, T* d_space, psz_stream_t stream)
+  void decompress_scatter(psz_header* header, BYTE* in, T* d_space, psz_stream_t stream)
   {
     auto access = [&](int FIELD, szt offset_nbyte = 0) {
       return (void*)(in + header->entry[FIELD] + offset_nbyte);
@@ -414,7 +305,7 @@ struct Compressor<C>::impl {
     auto d_spidx = (M*)access(SPFMT, header->splen * sizeof(T));
 
     if (header->splen != 0)
-      psz::spv_scatter_naive<PROPER_GPU_BACKEND, T, M>(
+      psz::spv_scatter_naive<PROPER_RUNTIME, T, M>(
           d_spval, d_spidx, header->splen, d_space, &time_sp, stream);
     // return this;
   }
@@ -474,15 +365,13 @@ template <class C>
 Compressor<C>::Compressor() : pimpl{std::make_unique<impl>()} {};
 
 template <class C>
-Compressor<C>::Compressor(psz_context* ctx, bool debug) :
-    pimpl{std::make_unique<impl>()}
+Compressor<C>::Compressor(psz_context* ctx, bool debug) : pimpl{std::make_unique<impl>()}
 {
   pimpl->template init(ctx, true /* comp */, debug);
 }
 
 template <class C>
-Compressor<C>::Compressor(psz_header* header, bool debug) :
-    pimpl{std::make_unique<impl>()}
+Compressor<C>::Compressor(psz_header* header, bool debug) : pimpl{std::make_unique<impl>()}
 {
   pimpl->template init(header, false /* decomp */, debug);
 }
@@ -494,8 +383,6 @@ template <class C>
 Compressor<C>* Compressor<C>::compress(
     pszctx* ctx, T* in, BYTE** out, size_t* outlen, void* stream)
 {
-  PSZSANITIZE_PSZCTX(ctx);
-
   pimpl->compress_predict(ctx, in, stream);
 
   if (ctx->codec1_type == Huffman) pimpl->compress_histogram(ctx, stream);
@@ -522,16 +409,14 @@ Compressor<C>* Compressor<C>::clear_buffer()
 }
 
 template <class C>
-Compressor<C>* Compressor<C>::decompress(
-    psz_header* header, BYTE* in, T* out, void* stream)
+Compressor<C>* Compressor<C>::decompress(psz_header* header, BYTE* in, T* out, void* stream)
 {
   // TODO host having copy of header when compressing
   if (not header) {
     header = new psz_header;
 #if defined(PSZ_USE_CUDA) || defined(PSZ_USE_HIP)
     CHECK_GPU(cudaMemcpyAsync(
-        header, in, sizeof(psz_header), cudaMemcpyDeviceToHost,
-        (cudaStream_t)stream));
+        header, in, sizeof(psz_header), cudaMemcpyDeviceToHost, (cudaStream_t)stream));
     CHECK_GPU(cudaStreamSynchronize((cudaStream_t)stream));
 #elif defined(PSZ_USE_1API)
     ((sycl::queue*)stream)->memcpy(header, in, sizeof(Header));
@@ -552,16 +437,13 @@ Compressor<C>* Compressor<C>::decompress(
 
 // public getter
 template <class C>
-Compressor<C>* Compressor<C>::dump_compress_intermediate(
-    pszctx* ctx, psz_stream_t stream)
+Compressor<C>* Compressor<C>::dump_compress_intermediate(pszctx* ctx, psz_stream_t stream)
 {
   auto dump_name = [&](string t, string suffix = ".quant") -> string {
-    return string(ctx->file_input) + "." + string(ctx->char_meta_eb) + suffix +
-           "_" + t;
+    return string(ctx->file_input) + "." + string(ctx->char_meta_eb) + suffix + "_" + t;
   };
 
   if (ctx->dump_hist) {
-    // TODO to be portable
     cudaStreamSynchronize((cudaStream_t)stream);
     auto& d = pimpl->mem->_hist;
     // TODO caution! lift hardcoded dtype (hist)
@@ -570,8 +452,8 @@ Compressor<C>* Compressor<C>::dump_compress_intermediate(
   if (ctx->dump_quantcode) {
     cudaStreamSynchronize((cudaStream_t)stream);
     auto& d = pimpl->mem->_ectrl;
-    // TODO caution! list hardcoded dtype (quant)
-    d->control({D2H})->file(dump_name("u2", ".quant").c_str(), ToFile);
+    d->control({MallocHost, D2H})
+        ->file(dump_name("u" + to_string(sizeof(E)), ".quant").c_str(), ToFile);
   }
 
   return this;
@@ -603,8 +485,7 @@ template <class C>
 Compressor<C>* Compressor<C>::export_timerecord(float* ext_timerecord)
 {
   if (ext_timerecord)
-    for (auto i = 0; i < STAGE_END - 1; i++)
-      ext_timerecord[i] = pimpl->timerecord_v2[i];
+    for (auto i = 0; i < STAGE_END - 1; i++) ext_timerecord[i] = pimpl->timerecord_v2[i];
   return this;
 }
 
