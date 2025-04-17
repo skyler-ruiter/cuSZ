@@ -1,14 +1,17 @@
-add_executable(demo_capi_cuda src/demo_capi.cuda.cc)
-target_link_libraries(demo_capi_cuda PRIVATE cusz)
+add_library(example_utils2 src/ex_utils2.cc)
+target_link_libraries(example_utils2 PRIVATE cusz)
 
-# add_library(ex_utils src/ex_utils.cu)
-# target_link_libraries(ex_utils
-# PUBLIC psz_cu_compile_settings)
-# add_executable(bin_pipeline_cu src/bin_pipeline.cu_hip.cc)
-# target_link_libraries(bin_pipeline_cu
-# PRIVATE cusz CUDA::cudart)
+add_executable(demo_cuda_v1 src/demo_v1.cuda.cc)
+target_link_libraries(demo_cuda_v1 PRIVATE cusz)
+
+add_executable(demo_cuda_v2 src/demo_v2.cuda.cc)
+target_link_libraries(demo_cuda_v2 PRIVATE cusz)
+
 add_executable(prequant src/bin_prequant.cc)
 target_link_libraries(prequant PRIVATE cusz CUDA::cudart)
+
+add_executable(pred src/pred.cc)
+target_link_libraries(pred PRIVATE cusz CUDA::cudart)
 
 add_executable(phf src/bin_phf.cc)
 target_link_libraries(phf PRIVATE cusz CUDA::cudart)
@@ -18,3 +21,6 @@ target_link_libraries(bin_hist PRIVATE cusz CUDA::cudart)
 
 add_executable(bin_fzgcodec src/bin_fzgcodec.cc)
 target_link_libraries(bin_fzgcodec PRIVATE cusz CUDA::cudart)
+
+add_executable(batch_run src/batch_run.cc)
+target_link_libraries(batch_run PRIVATE cusz example_utils2 CUDA::cudart)

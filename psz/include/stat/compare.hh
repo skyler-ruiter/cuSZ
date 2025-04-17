@@ -63,7 +63,7 @@ template <typename T> void GPU_extrema(T* d_ptr, size_t len, T res[4]);
 
 // clang-format on
 
-namespace psz::utils {
+namespace psz::analysis {
 
 template <psz_runtime P, typename T>
 bool identical(T* d1, T* d2, size_t const len)
@@ -79,7 +79,7 @@ bool identical(T* d1, T* d2, size_t const len)
 }
 
 template <psz_runtime P, typename T>
-void probe_extrema(T* in, size_t len, T res[4])
+[[deprecated]] void probe_extrema(T* in, size_t len, T res[4])
 {
   if (P == SEQ) cppstl::CPU_extrema(in, len, res);
 #ifdef REACTIVATE_THRUSTGPU
@@ -92,6 +92,42 @@ void probe_extrema(T* in, size_t len, T res[4])
     dpcpp::GPU_extrema(in, len, res);
   else
     throw runtime_error(string(__FUNCTION__) + ": backend not supported.");
+}
+
+template <typename T1, psz_runtime R = SEQ, typename T2 = T1>
+void CPU_probe_extrema(T1* in, size_t len, T2& max_value, T2& min_value, T2& range)
+{
+  T1 result[4];
+
+  if (R == SEQ)
+    cppstl::CPU_extrema(in, len, result);
+  else
+    throw runtime_error(string(__FUNCTION__) + ": backend not supported.");
+
+  min_value = result[0];
+  max_value = result[1];
+  range = max_value - min_value;
+}
+
+template <typename T1, psz_runtime R = CUDA, typename T2 = T1>
+void GPU_probe_extrema(T1* in, size_t len, T2& max_value, T2& min_value, T2& range)
+{
+  T1 result[4];
+
+  if (R == CUDA or R == ROCM)
+    module::GPU_extrema(in, len, result);
+  else if (R == SYCL)
+    dpcpp::GPU_extrema(in, len, result);
+#ifdef REACTIVATE_THRUSTGPU
+  else if (R == THRUST_DPL)
+    thrustgpu::GPU_extrema(in, len, result);
+#endif
+  else
+    throw runtime_error(string(__FUNCTION__) + ": backend not supported.");
+
+  min_value = result[0];
+  max_value = result[1];
+  range = max_value - min_value;
 }
 
 template <psz_runtime P, typename T>
@@ -128,6 +164,6 @@ void assess_quality(psz_statistics* s, T* xdata, T* odata, size_t const len)
     throw runtime_error(string(__FUNCTION__) + ": backend not supported.");
 }
 
-}  // namespace psz::utils
+}  // namespace psz::analysis
 
 #endif /* CE05A256_23CB_4243_8839_B1FDA9C540D2 */

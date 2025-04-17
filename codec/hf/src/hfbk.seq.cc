@@ -4,6 +4,7 @@
 #include "busyheader.hh"
 #include "cusz/type.h"
 #include "cxx_hfbk.h"
+#include "hf.h"
 #include "hfbk_impl.hh"
 #include "hfcanon.hh"
 #include "hfword.hh"
@@ -12,7 +13,7 @@
 template <typename E, typename H>
 void phf_CPU_build_canonized_codebook_v1(
     uint32_t* freq, int const bklen, H* book, uint8_t* revbook, int const revbook_bytes,
-    float* time)
+    float* milliseconds)
 {
   using PW4 = HuffmanWord<4>;
   using PW8 = HuffmanWord<8>;
@@ -22,7 +23,7 @@ void phf_CPU_build_canonized_codebook_v1(
   auto space_bytes = hf_space<E, H>::space_bytes(bklen);
   auto revbook_ofst = hf_space<E, H>::revbook_offset(bklen);
   auto space = new hf_canon_reference<E, H>(bklen);
-  *time = 0;
+  if (milliseconds) *milliseconds = 0;
 
   // mask the codebook to 0xff
   memset(book, 0xff, bk_bytes);
@@ -35,7 +36,7 @@ void phf_CPU_build_canonized_codebook_v1(
     // phf_CPU_build_codebook_v2<H>(freq, bklen, book);
 
     auto z = hires::now();
-    *time += static_cast<duration_t>(z - a).count() * 1000;
+    if (milliseconds) *milliseconds += static_cast<duration_t>(z - a).count() * 1000;
   }
 
   // print
@@ -57,7 +58,7 @@ void phf_CPU_build_canonized_codebook_v1(
     auto b = hires::now();
     auto t2 = static_cast<duration_t>(b - a).count() * 1000;
     // cout << t2 << endl;
-    *time += t2;
+    if (milliseconds) *milliseconds += t2;
   }
 
   // copy to output1
@@ -81,7 +82,7 @@ void phf_CPU_build_canonized_codebook_v1(
 template <typename E, typename H>
 void phf_CPU_build_canonized_codebook_v2(
     uint32_t* freq, int const bklen, uint32_t* bk4, uint8_t* revbook, int const revbook_bytes,
-    float* time)
+    float* milliseconds)
 {
   using PW4 = HuffmanWord<4>;
   using PW8 = HuffmanWord<8>;
@@ -91,7 +92,7 @@ void phf_CPU_build_canonized_codebook_v2(
   auto space_bytes = hf_space<E, H>::space_bytes(bklen);
   auto revbook_ofst = hf_space<E, H>::revbook_offset(bklen);
   auto space = new hf_canon_reference<E, H>(bklen);
-  *time = 0;
+  if (milliseconds) *milliseconds = 0;
 
   // mask the codebook to 0xff
   memset(bk4, 0xff, bk_bytes);
@@ -110,7 +111,7 @@ void phf_CPU_build_canonized_codebook_v2(
     auto z = hires::now();
     auto t1 = static_cast<duration_t>(z - a).count() * 1000;
     // cout << t1 << endl;
-    *time += t1;
+    if (milliseconds) *milliseconds += t1;
   }
 
   // resolve the issue of being longer than 32 bits
@@ -151,7 +152,7 @@ void phf_CPU_build_canonized_codebook_v2(
     auto z = hires::now();
     auto t2 = static_cast<duration_t>(z - a).count() * 1000;
     // cout << t2 << endl;
-    *time += t2;
+    if (milliseconds) *milliseconds += t2;
   }
 
   // copy to output1
@@ -171,7 +172,7 @@ void phf_CPU_build_canonized_codebook_v2(
 #define INSTANTIATE_PHF_CPU_BUILD_CANONICAL(E, H)                                           \
   template void phf_CPU_build_canonized_codebook_v2<E, H>(                                  \
       uint32_t * freq, int const bklen, H* book, uint8_t* revbook, int const revbook_bytes, \
-      float* time);
+      float* milliseconds);
 
 INSTANTIATE_PHF_CPU_BUILD_CANONICAL(u1, u4)
 INSTANTIATE_PHF_CPU_BUILD_CANONICAL(u2, u4)
@@ -184,3 +185,14 @@ INSTANTIATE_PHF_CPU_BUILD_CANONICAL(u4, u4)
 // INSTANTIATE_PHF_CPU_BUILD_CANONICAL(u4, ull)
 
 #undef INSTANTIATE_PHF_CPU_BUILD_CANONICAL
+
+size_t phf_reverse_book_bytes(uint16_t bklen, size_t BK_UNIT_BYTES, size_t SYM_BYTES)
+{
+  static const int CELL_BITWIDTH = BK_UNIT_BYTES * 8;
+  return BK_UNIT_BYTES * (2 * CELL_BITWIDTH) + SYM_BYTES * bklen;
+}
+
+uint8_t* phf_allocate_reverse_book(uint16_t bklen, size_t BK_UNIT_BYTES, size_t SYM_BYTES)
+{
+  return new uint8_t[phf_reverse_book_bytes(bklen, BK_UNIT_BYTES, SYM_BYTES)];
+}

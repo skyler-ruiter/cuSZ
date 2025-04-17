@@ -9,15 +9,13 @@
  *
  */
 
-#ifndef D1C4C282_1485_4677_BC6B_F3DB79ED853E
-#define D1C4C282_1485_4677_BC6B_F3DB79ED853E
-
 #include "cusz/suint.hh"
 #include "cusz/type.h"
 #include "kernel/predictor.hh"
 #include "utils/err.hh"
 #include "utils/timer.hh"
 // #include "subr.cu_hip.inl"
+#include "mem/cxx_backends.h"
 #include "wave32.cuhip.inl"
 
 #define SETUP_ZIGZAG                    \
@@ -119,7 +117,7 @@ __global__ void KERNEL_CUHIP_x_lorenzo_1d1l(
 //       thp(1,0)[7]  thp(1,0)[7]  thp(1,0)[7]  thp(1,0)[7]
 
 template <typename T, bool UseZigZag, typename Eq = uint16_t, typename Fp = T>
-__global__ void KERNEL_CUHIP_x_lorenzo_2d1l(  //
+__global__ [[deprecated]] void KERNEL_CUHIP_x_lorenzo_2d1l(  //
     Eq* const in_eq, T* const in_outlier, T* const out_data, dim3 const data_len3,
     dim3 const data_leap3, uint16_t const radius, Fp const ebx2)
 {
@@ -174,6 +172,98 @@ __global__ void KERNEL_CUHIP_x_lorenzo_2d1l(  //
     for (auto i = 0; i < YSEQ; i++) {
       for (auto d = 1; d < TileDim; d *= 2) {
         T n = __shfl_up_sync(0xffffffff, thp_data[i], d, 16);  // half-warp shuffle
+        if (threadIdx.x >= d) thp_data[i] += n;
+      }
+      thp_data[i] *= ebx2;  // scale accordingly
+    }
+  };
+
+  auto decomp_write_2d = [&]() {
+#pragma unroll
+    for (auto i = 0; i < YSEQ; i++) {
+      auto gid = get_gid(i);
+      if (gix < data_len3.x and (giy_base + i) < data_len3.y) out_data[gid] = thp_data[i];
+    }
+  };
+
+  /*-----------*/
+
+  load_fuse_2d();
+  block_scan_2d();
+  decomp_write_2d();
+}
+
+template <typename T, bool UseZigZag, typename Eq = uint16_t, typename Fp = T>
+__global__ void KERNEL_CUHIP_x_lorenzo_2d1l__32x32(  //
+    Eq* const in_eq, T* const in_outlier, T* const out_data, dim3 const data_len3,
+    dim3 const data_leap3, uint16_t const radius, Fp const ebx2)
+{
+  SETUP_ZIGZAG;
+  constexpr auto TileDim = 32;
+  constexpr auto NumWarps = 4;
+  constexpr auto YSEQ = TileDim / NumWarps;
+
+  __shared__ T scratch[NumWarps - 1][TileDim + 1];
+  T thp_data[YSEQ] = {0};
+
+  auto gix = blockIdx.x * TileDim + threadIdx.x;
+  auto giy_base = blockIdx.y * TileDim + threadIdx.y * YSEQ;
+  auto get_gid = [&](auto i) { return (giy_base + i) * data_leap3.y + gix; };
+
+  auto load_fuse_2d = [&]() {
+#pragma unroll
+    for (auto i = 0; i < YSEQ; i++) {
+      auto gid = get_gid(i);
+      if (gix < data_len3.x and (giy_base + i) < data_len3.y) {
+        // fuse outlier and error-quant
+        if constexpr (not UseZigZag) {
+          thp_data[i] = in_outlier[gid] + static_cast<T>(in_eq[gid]) - radius;
+        }
+        else {
+          auto e = in_eq[gid];
+          thp_data[i] = in_outlier[gid] + static_cast<T>(ZigZag::decode(static_cast<EqUInt>(e)));
+        }
+      }
+    }
+  };
+
+  auto block_scan_2d = [&]() {
+    for (auto i = 1; i < YSEQ; i++) thp_data[i] += thp_data[i - 1];
+
+    // 0, 1, 2
+    if (threadIdx.y < NumWarps - 1) scratch[threadIdx.y][threadIdx.x] = thp_data[YSEQ - 1];
+    __syncthreads();
+
+    // cross-wrap scan
+
+    if (threadIdx.y == 0) {
+      T warp_accum[NumWarps - 1];  // 0, 1, 2
+#pragma unroll
+      for (auto i = 0; i < NumWarps - 1; i++) {  // load thp_data[YSEQ - 1] from each warp
+        warp_accum[i] = scratch[i][threadIdx.x];
+      }
+#pragma unroll
+      for (auto i = 1; i < NumWarps - 1; i++) {  // exclusive scan
+        warp_accum[i] += warp_accum[i - 1];
+      }
+#pragma unroll
+      for (auto i = 1; i < NumWarps - 1; i++) {  // determine the final addends
+        scratch[i][threadIdx.x] = warp_accum[i];
+      }
+    }
+    __syncthreads();
+
+    if (threadIdx.y > 0) {
+      auto addend = scratch[threadIdx.y - 1][threadIdx.x];
+#pragma unroll
+      for (auto i = 0; i < YSEQ; i++) thp_data[i] += addend;  // regression as pointer
+    }
+    __syncthreads();
+
+#pragma unroll
+    for (auto i = 0; i < YSEQ; i++) {
+      for (auto d = 1; d < TileDim; d *= 2) {
+        T n = __shfl_up_sync(0xffffffff, thp_data[i], d, 32);  // full-warp shuffle
         if (threadIdx.x >= d) thp_data[i] += n;
       }
       thp_data[i] *= ebx2;  // scale accordingly
@@ -290,57 +380,50 @@ __global__ void KERNEL_CUHIP_x_lorenzo_3d1l(  //
 namespace psz::module {
 
 template <typename T, bool UseZigZag, typename Eq>
-pszerror GPU_x_lorenzo_nd(
-    Eq* const in_eq, T* const in_outlier, T* const out_data,
-    std::array<size_t, 3> const _data_len3, f8 const eb, uint16_t const radius, f4* time_elapsed,
-    void* stream)
+int GPU_x_lorenzo_nd(
+    Eq* const in_eq, T* const in_outlier, T* const out_data, stdlen3 const _data_len3,
+    f8 const ebx2, f8 const ebx2_r, uint16_t const radius, void* stream)
 {
   using namespace psz::kernelconfig;
 
   // error bound
-  auto ebx2 = eb * 2, ebx2_r = 1 / ebx2;
   auto data_len3 = TO_DIM3(_data_len3);
   auto data_leap3 = dim3(1, data_len3.x, data_len3.x * data_len3.y);
   auto d = lorenzo_utils::ndim(data_len3);
 
-  CREATE_GPUEVENT_PAIR;
-  START_GPUEVENT_RECORDING((cudaStream_t)stream);
-
-  if (d == 1) {
+  if (d == 1)
     psz::KERNEL_CUHIP_x_lorenzo_1d1l<
         T, x_lorenzo<1>::tile.x, x_lorenzo<1>::sequentiality.x, UseZigZag, Eq>
         <<<x_lorenzo<1>::thread_grid(data_len3), x_lorenzo<1>::thread_block, 0,
-           (cudaStream_t)stream>>>(
+           (GPU_BACKEND_SPECIFIC_STREAM)stream>>>(
             in_eq, in_outlier, out_data, data_len3, data_leap3, radius, (T)ebx2);
-  }
   else if (d == 2) {
-    psz::KERNEL_CUHIP_x_lorenzo_2d1l<T, UseZigZag, Eq>
-        <<<x_lorenzo<2>::thread_grid(data_len3), x_lorenzo<2>::thread_block, 0,
-           (cudaStream_t)stream>>>(
+    // psz::KERNEL_CUHIP_x_lorenzo_2d1l<T, UseZigZag, Eq>
+    //     <<<x_lorenzo<2>::thread_grid(data_len3), x_lorenzo<2>::thread_block, 0,
+    //        (GPU_BACKEND_SPECIFIC_STREAM)stream>>>(
+    //         in_eq, in_outlier, out_data, data_len3, data_leap3, radius, (T)ebx2);
+    psz::KERNEL_CUHIP_x_lorenzo_2d1l__32x32<T, UseZigZag, Eq>
+        <<<x_lorenzo<2, 32>::thread_grid(data_len3), x_lorenzo<2, 32>::thread_block, 0,
+           (GPU_BACKEND_SPECIFIC_STREAM)stream>>>(
             in_eq, in_outlier, out_data, data_len3, data_leap3, radius, (T)ebx2);
   }
-  else if (d == 3) {
+  else if (d == 3)
     psz::KERNEL_CUHIP_x_lorenzo_3d1l<T, UseZigZag, Eq>
         <<<x_lorenzo<3>::thread_grid(data_len3), x_lorenzo<3>::thread_block, 0,
-           (cudaStream_t)stream>>>(
+           (GPU_BACKEND_SPECIFIC_STREAM)stream>>>(
             in_eq, in_outlier, out_data, data_len3, data_leap3, radius, (T)ebx2);
-  }
-
-  STOP_GPUEVENT_RECORDING((cudaStream_t)stream);
-  CHECK_GPU(cudaStreamSynchronize((cudaStream_t)stream));
-  TIME_ELAPSED_GPUEVENT(time_elapsed);
-  DESTROY_GPUEVENT_PAIR;
+  else
+    return CUSZ_NOT_IMPLEMENTED;
 
   return CUSZ_SUCCESS;
 }
 
 }  // namespace psz::module
 
-#define INSTANTIATE_GPU_L23X_3params(T, USE_ZIGZAG, Eq)                          \
-  template pszerror psz::module::GPU_x_lorenzo_nd<T, USE_ZIGZAG, Eq>(            \
-      Eq* const in_eq, T* const in_outlier, T* const out_data,                   \
-      std::array<size_t, 3> const data_len3, f8 const eb, uint16_t const radius, \
-      f4* time_elapsed, void* stream);
+#define INSTANTIATE_GPU_L23X_3params(T, USE_ZIGZAG, Eq)                                 \
+  template int psz::module::GPU_x_lorenzo_nd<T, USE_ZIGZAG, Eq>(                        \
+      Eq* const in_eq, T* const in_outlier, T* const out_data, stdlen3 const data_len3, \
+      f8 const ebx2, f8 const ebx2_r, uint16_t const radius, void* stream);
 
 #define INSTANTIATE_GPU_L23X_2params(T, Eq)   \
   INSTANTIATE_GPU_L23X_3params(T, false, Eq); \
@@ -349,5 +432,3 @@ pszerror GPU_x_lorenzo_nd(
 #define INSTANTIATE_GPU_L23X_1param(T) \
   INSTANTIATE_GPU_L23X_2params(T, u1); \
   INSTANTIATE_GPU_L23X_2params(T, u2);
-
-#endif /* D1C4C282_1485_4677_BC6B_F3DB79ED853E */

@@ -2,13 +2,12 @@
 
 #include <cstddef>
 
-#include "cusz/review.h"
+#include "compressor.hh"
+#include "cusz.h"
 #include "cusz/type.h"
 #include "header.h"
-#include "mem/layout_cxx.hh"
 #include "port.hh"
 #include "stat/compare.hh"
-#include "tehm.hh"
 
 float get_throughput(float milliseconds, size_t nbyte)
 {
@@ -42,9 +41,9 @@ double get_total_time(psz::timerecord_t r)
   return total;
 }
 
-void* psz_make_timerecord() { return (void*)new psz::TimeRecord; }
+void* capi_psz_make_timerecord() { return (void*)new psz::TimeRecord; }
 
-void psz_review_comp_time_breakdown(void* _r, psz_header* h)
+void capi_psz_review_comp_time_breakdown(void* _r, psz_header* h)
 {
   auto sizeof_T = [&]() { return (h->dtype == F4 ? 4 : 8); };
   auto uncomp_bytes = h->x * h->y * h->z * sizeof_T();
@@ -91,12 +90,12 @@ string const psz_report_query_pred(psz_predtype const p)
   return lut.at(p);
 };
 
-string const psz_report_query_hist(psz_histogramtype const h)
+string const psz_report_query_hist(psz_histotype const h)
 {
-  const std::unordered_map<psz_histogramtype const, std::string const> lut = {
-      {psz_histogramtype::HistogramGeneric, "Hist-generic"},
-      {psz_histogramtype::HistogramSparse, "Hist-sparse"},
-      {psz_histogramtype::HistogramNull, "Hist-(null)"},
+  const std::unordered_map<psz_histotype const, std::string const> lut = {
+      {psz_histotype::HistogramGeneric, "Hist-generic"},
+      {psz_histotype::HistogramSparse, "Hist-sparse"},
+      {psz_histotype::NullHistogram, "Hist-(null)"},
   };
   return lut.at(h);
 };
@@ -110,7 +109,7 @@ string const psz_report_query_codec1(psz_codectype const c)
   return lut.at(c);
 };
 
-void psz_review_comp_time_from_header(psz_header* h)
+void capi_psz_review_comp_time_from_header(psz_header* h)
 {
   printf("\n");
   // [TODO] put error status
@@ -149,10 +148,12 @@ void psz_review_comp_time_from_header(psz_header* h)
   __print("logging::predictor", psz_report_query_pred(h->pred_type));
   __print("logging::histogram", psz_report_query_hist(h->hist_type));
   __print("logging::codec1", psz_report_query_codec1(h->codec1_type));
+  __print("logging::radius", h->radius);
+  __print("logging::bklen", h->radius * 2);
   __print("logging::max", h->logging_max);
   __print("logging::min", h->logging_min);
   __print("logging::range", h->logging_max - h->logging_min);
-  __print("logging::mode", h->logging_mode == Rel ? "Rel" : "Abs");
+  __print("logging::mode", h->mode == Rel ? "Rel" : "Abs");
   __print("logging::input_eb", h->user_input_eb);
   __print("logging::final_eb", h->eb);
   printf("--------------------------------------------------\n");
@@ -186,16 +187,18 @@ void psz_review_decomp_time_from_header(psz_header* h)
   println_text_v2("component", "predictor", psz_report_query_pred(h->pred_type));
   println_text_v2("component", "histogram", psz_report_query_hist(h->hist_type));
   println_text_v2("component", "codec1", psz_report_query_codec1(h->codec1_type));
+  println_text_v2("parameter", "radius", to_string(h->radius));
+  println_text_v2("parameter", "bklen", to_string(h->radius * 2));
 }
 
-void psz_review_compression(void* r, psz_header* h)
+void capi_psz_review_compression(void* r, psz_header* h)
 {
   printf("\n(c) COMPRESSION REPORT\n");
   psz_review_comp_time_from_header(h);
   psz_review_comp_time_breakdown((psz::timerecord_t)r, h);
 }
 
-void psz_review_decompression(void* r, size_t bytes)
+void capi_psz_review_decompression(void* r, size_t bytes)
 {
   printf(
       "\n\e[1m\e[31m"
@@ -214,7 +217,7 @@ void psz_review_decompression(void* r, size_t bytes)
 
 // TODO revise name
 template <typename T>
-void psz::utils::print_metrics_cross(psz_statistics* s, size_t comp_bytes, bool gpu_checker)
+void psz::analysis::print_metrics_cross(psz_statistics* s, size_t comp_bytes, bool gpu_checker)
 {
   auto checker = (not gpu_checker) ? string("CPU-checker") : string("GPU-checker");
 
@@ -285,7 +288,7 @@ void psz::utils::print_metrics_cross(psz_statistics* s, size_t comp_bytes, bool 
   println_segline_dotted();
 }
 
-void psz::utils::print_metrics_auto(double* lag1_cor, double* lag2_cor)
+void psz::analysis::print_metrics_auto(double* lag1_cor, double* lag2_cor)
 {
   auto println_v2 = [](string const prefix, string const kw, double n1) {
     std::string combined = prefix + "::\e[1m\e[31m" + kw + "\e[0m";
@@ -297,7 +300,8 @@ void psz::utils::print_metrics_auto(double* lag1_cor, double* lag2_cor)
 }
 
 template <typename T>
-void pszcxx_evaluate_quality_cpu(T* _d1, T* _d2, size_t len, size_t comp_bytes, bool from_device)
+void psz::analysis::CPU_evaluate_quality_and_print(
+    T* _d1, T* _d2, size_t len, size_t comp_bytes, bool from_device)
 {
   auto stat = new psz_statistics;
   T* reconstructed;
@@ -314,15 +318,15 @@ void pszcxx_evaluate_quality_cpu(T* _d1, T* _d2, size_t len, size_t comp_bytes, 
     cudaMemcpy(reconstructed, _d1, bytes, cudaMemcpyDeviceToHost);
     cudaMemcpy(origin, _d2, bytes, cudaMemcpyDeviceToHost);
   }
-  psz::utils::assess_quality<SEQ, T>(stat, reconstructed, origin, len);
-  psz::utils::print_metrics_cross<T>(stat, comp_bytes, false);
+  psz::analysis::assess_quality<SEQ, T>(stat, reconstructed, origin, len);
+  psz::analysis::print_metrics_cross<T>(stat, comp_bytes, false);
 
   auto stat_auto_lag1 = new psz_statistics;
-  psz::utils::assess_quality<SEQ, T>(stat_auto_lag1, origin, origin + 1, len - 1);
+  psz::analysis::assess_quality<SEQ, T>(stat_auto_lag1, origin, origin + 1, len - 1);
   auto stat_auto_lag2 = new psz_statistics;
-  psz::utils::assess_quality<SEQ, T>(stat_auto_lag2, origin, origin + 2, len - 2);
+  psz::analysis::assess_quality<SEQ, T>(stat_auto_lag2, origin, origin + 2, len - 2);
 
-  psz::utils::print_metrics_auto(&stat_auto_lag1->score_coeff, &stat_auto_lag2->score_coeff);
+  psz::analysis::print_metrics_auto(&stat_auto_lag1->score_coeff, &stat_auto_lag2->score_coeff);
 
   if (from_device) {
     if (reconstructed) cudaFreeHost(reconstructed);
@@ -332,64 +336,5 @@ void pszcxx_evaluate_quality_cpu(T* _d1, T* _d2, size_t len, size_t comp_bytes, 
   delete stat, delete stat_auto_lag1, delete stat_auto_lag2;
 }
 
-template <typename T>
-void psz::utils::view(
-    psz_header* header, memobj<T>* xdata, memobj<T>* cmp, string const& file_to_compare)
-{
-  auto len = pszheader_uncompressed_len(header);
-  auto compressd_bytes = pszheader_compressed_len(header);
-
-  auto compare_on_gpu = [&]() {
-    cmp->control({MallocHost, Malloc})->file(file_to_compare.c_str(), FromFile)->control({H2D});
-
-    pszcxx_evaluate_quality_gpu(xdata->dptr(), cmp->dptr(), len, compressd_bytes);
-  };
-
-  auto compare_on_cpu = [&]() {
-    cmp->control({MallocHost})->file(file_to_compare.c_str(), FromFile);
-    xdata->control({D2H});
-    pszcxx_evaluate_quality_cpu(xdata->hptr(), cmp->hptr(), len, compressd_bytes);
-  };
-
-  if (file_to_compare != "") {
-    auto gb = 1.0 * sizeof(T) * len / 1e9;
-    if (gb < 0.8)
-      compare_on_gpu();
-    else
-      compare_on_cpu();
-  }
-}
-
-#define __INSTANTIATE_CPU_VIEWER(T) \
-  template void psz::utils::view<T>(psz_header*, memobj<T>*, memobj<T>*, string const&);
-
-__INSTANTIATE_CPU_VIEWER(float)
-__INSTANTIATE_CPU_VIEWER(double)
-
-void psz_review_evaluated_quality(
-    psz_runtime p, psz_dtype d, void* xdata, void* odata, size_t len, size_t comp_bytes,
-    bool arrays_on_device)
-{
-  if (d == F4) {
-    auto x = (float*)xdata;
-    auto o = (float*)odata;
-    if (p == SEQ) pszcxx_evaluate_quality_cpu<float>(x, o, len, comp_bytes, arrays_on_device);
-    // else if (p == THRUST_DPL)
-    //   pszcxx_evaluate_quality_gpu<float, THRUST_DPL>(x, o, len, comp_bytes);
-    else if (p == PROPER_RUNTIME)
-      pszcxx_evaluate_quality_gpu<float, PROPER_RUNTIME>(x, o, len, comp_bytes);
-    else
-      printf("psz_review_evaluated_quality: not a valid backend.");
-  }
-  else if (d == F8) {
-    auto x = (double*)xdata;
-    auto o = (double*)odata;
-    if (p == SEQ) pszcxx_evaluate_quality_cpu<double>(x, o, len, comp_bytes, arrays_on_device);
-    // else if (p == THRUST_DPL)
-    //   pszcxx_evaluate_quality_gpu<double, THRUST_DPL>(x, o, len, comp_bytes);
-    else if (p == PROPER_RUNTIME)
-      pszcxx_evaluate_quality_gpu<double, PROPER_RUNTIME>(x, o, len, comp_bytes);
-    else
-      printf("psz_review_evaluated_quality: not a valid backend.");
-  }
-}
+template void psz::analysis::print_metrics_cross<float>(psz_statistics*, size_t, bool);
+template void psz::analysis::print_metrics_cross<double>(psz_statistics*, size_t, bool);

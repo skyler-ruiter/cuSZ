@@ -26,18 +26,22 @@
 #include "hfclass.hh"
 #include "hfcxx_module.hh"
 #include "mem/cxx_memobj.h"
+#include "mem/cxx_sp_gpu.h"
+#include "utils/io.hh"
 #include "utils/timer.hh"
 
-#define PHF_TPL template <typename E, bool TIMING>
-#define PHF_CLASS HuffmanCodec<E, TIMING>
+#define PHF_TPL template <typename E>
+#define PHF_CLASS HuffmanCodec<E>
+
+using _portable::utils::tofile;
 
 namespace phf {
 
-template <typename E, bool TIMING>
-struct HuffmanCodec<E, TIMING>::impl {
+template <typename E>
+struct HuffmanCodec<E>::impl {
   static const bool TimeBreakdown{false};
 
-  using phf_module = phf::cuhip::modules<E, H, TIMING>;
+  using phf_module = phf::cuhip::modules<E, H>;
   using Header = phf_header;
 
   phf_header header;  // TODO combine psz and pszhf headers
@@ -48,29 +52,39 @@ struct HuffmanCodec<E, TIMING>::impl {
   float time_codec() const { return _time_lossless; }
   size_t inlen() const { return len; };
 
+  GPU_EVENT event_start, event_end;
+
   size_t pardeg, sublen;
   int numSMs;
-  size_t len, bklen;
-  memobj<u4>* hist;
+  size_t len;
+  static constexpr u2 max_bklen = 1024;
+  u2 rt_bklen;
+
+  GPU_unique_hptr<u4[]> h_hist;
 
   Buf* buf;
 
   impl() = default;
-  ~impl() { delete buf; }
+  ~impl()
+  {
+    delete buf;
+    event_destroy_pair(event_start, event_end);
+  }
 
   // keep ctor short
-  void init(size_t const inlen, int const _bklen, int const _pardeg, bool debug)
+  void init(size_t const inlen, int const _pardeg, bool debug)
   {
     cudaDeviceGetAttribute(&numSMs, cudaDevAttrMultiProcessorCount, 0);
 
     pardeg = _pardeg;
-    bklen = _bklen;
     len = inlen;
     sublen = (inlen - 1) / pardeg + 1;
 
     // TODO make unique_ptr; modify ctor
-    buf = new Buf(inlen, _bklen, _pardeg, true, debug);
-    hist = new memobj<u4>(bklen, "phf::hist", {MallocHost});  // dptr from external
+    buf = new Buf(inlen, max_bklen, _pardeg, true, debug);
+    h_hist = MAKE_UNIQUE_HOST(u4, max_bklen);
+
+    std::tie(event_start, event_end) = event_create_pair();
   }
 
 #ifdef ENABLE_HUFFBK_GPU
@@ -83,64 +97,57 @@ struct HuffmanCodec<E, TIMING>::impl {
   }
 #else
   // build Huffman tree on CPU
-  void buildbook(u4* freq, phf_stream_t stream)
+  void buildbook(u4* freq, u2 const _rt_bklen, phf_stream_t stream)
   {
-    this->hist->dptr(freq);
+    rt_bklen = _rt_bklen;
+    memcpy_allkinds<D2H>(h_hist.get(), freq, rt_bklen);
 
     phf_CPU_build_canonized_codebook_v2<E, H4>(
-        hist->control({D2H})->hptr(), bklen, buf->bk4->hptr(), buf->revbk4->hptr(),
-        revbk4_bytes(bklen), &_time_book);
-    buf->bk4->control({Async_H2D}, (cudaStream_t)stream);
-    buf->revbk4->control({Async_H2D}, (cudaStream_t)stream);
+        h_hist.get(), rt_bklen, buf->h_bk4.get(), buf->h_revbk4.get(), buf->revbk4_bytes,
+        &_time_book);
+    memcpy_allkinds_async<H2D>(buf->d_bk4.get(), buf->h_bk4.get(), rt_bklen, (cudaStream_t)stream);
+    memcpy_allkinds_async<H2D>(
+        buf->d_revbk4.get(), buf->h_revbk4.get(), buf->revbk4_bytes, (cudaStream_t)stream);
   }
 #endif
-
-  static int __revbk_bytes(int bklen, int BK_UNIT_BYTES, int SYM_BYTES)
-  {
-    static const int CELL_BITWIDTH = BK_UNIT_BYTES * 8;
-    return BK_UNIT_BYTES * (2 * CELL_BITWIDTH) + SYM_BYTES * bklen;
-  }
-
-  static int revbk4_bytes(int bklen) { return __revbk_bytes(bklen, 4, sizeof(SYM)); }
-  static int revbk8_bytes(int bklen) { return __revbk_bytes(bklen, 8, sizeof(SYM)); }
 
   void encode(E* in, size_t const len, uint8_t** out, size_t* outlen, phf_stream_t stream)
   {
     _time_lossless = 0;
 
-    hfpar_description hfpar{sublen, pardeg};
+    phf::par_config hfpar{sublen, pardeg};
 
-    {
-      phf_module::GPU_coarse_encode_phase1(
-          {in, len}, buf->bk4->array1_d(), numSMs, buf->scratch4->array1_d(), &_time_lossless,
-          stream);
+    event_recording_start(event_start, stream);
 
-      if constexpr (TimeBreakdown) { b = hires::now(); }
+    phf_module::GPU_coarse_encode_phase1(
+        {in, len}, {buf->d_bk4.get(), rt_bklen}, numSMs, {buf->d_scratch4.get(), len}, stream);
 
-      phf_module::GPU_coarse_encode_phase2(
-          buf->scratch4->array1_d(), hfpar, buf->scratch4->array1_d() /* placeholder */,
-          buf->par_nbit->array1_d(), buf->par_ncell->array1_d(), &_time_lossless, stream);
+    phf_module::GPU_coarse_encode_phase2(
+        {buf->d_scratch4.get(), len}, hfpar, {buf->d_scratch4.get(), len} /* placeholder */,
+        {buf->d_par_nbit.get(), buf->pardeg}, {buf->d_par_ncell.get(), buf->pardeg}, stream);
 
-      if constexpr (TimeBreakdown) c = hires::now();
-    }
+    // sync_by_stream(stream);
 
-    phf_module::GPU_coarse_encode_phase3(
-        buf->par_nbit->array1_d(), buf->par_ncell->array1_d(), buf->par_entry->array1_d(), hfpar,
-        buf->par_nbit->array1_h(), buf->par_ncell->array1_h(), buf->par_entry->array1_h(),
+    phf_module::GPU_coarse_encode_phase3_sync(
+        {buf->d_par_nbit.get(), buf->pardeg}, {buf->d_par_ncell.get(), buf->pardeg},
+        {buf->d_par_entry.get(), buf->pardeg}, hfpar, {buf->h_par_nbit.get(), buf->pardeg},
+        {buf->h_par_ncell.get(), buf->pardeg}, {buf->h_par_entry.get(), buf->pardeg},
         &header.total_nbit, &header.total_ncell, nullptr, stream);
 
-    if constexpr (TimeBreakdown) d = hires::now();
+    // sync_by_stream(stream);
 
     phf_module::GPU_coarse_encode_phase4(
-        buf->scratch4->array1_d(), buf->par_entry->array1_d(), buf->par_ncell->array1_d(), hfpar,
-        buf->bitstream4->array1_d(), &_time_lossless, stream);
+        {buf->d_scratch4.get(), len}, {buf->d_par_entry.get(), buf->pardeg},
+        {buf->d_par_ncell.get(), buf->pardeg}, hfpar,
+        {buf->d_bitstream4.get(), buf->bitstream_max_len}, stream);
 
-    if constexpr (TimeBreakdown) e = hires::now();
+    event_recording_stop(event_end, stream);
+    event_time_elapsed(event_start, event_end, &_time_lossless);
+
+    sync_by_stream(stream);
 
     make_metadata();
     buf->memcpy_merge(header, stream);  // TODO externalize/make explicit
-
-    if constexpr (TimeBreakdown) f = hires::now();
 
     if constexpr (TimeBreakdown) {
       cout << "phase1: " << static_cast<duration_t>(b - a).count() * 1e6 << endl;
@@ -151,7 +158,7 @@ struct HuffmanCodec<E, TIMING>::impl {
     }
 
     // TODO may cooperate with upper-level; output
-    *out = buf->encoded->dptr();
+    *out = buf->d_encoded;
     *outlen = phf_encoded_bytes(&header);
   }
 
@@ -164,11 +171,15 @@ struct HuffmanCodec<E, TIMING>::impl {
 
 #define PHF_ACCESSOR(SYM, TYPE) reinterpret_cast<TYPE*>(in_encoded + header.entry[PHFHEADER_##SYM])
 
+    event_recording_start(event_start, stream);
+
     phf_module::GPU_coarse_decode(
-        {PHF_ACCESSOR(BITSTREAM, H4), 0},
-        {PHF_ACCESSOR(REVBK, PHF_BYTE), (size_t)revbk4_bytes(header.bklen)},
-        {PHF_ACCESSOR(PAR_NBIT, M), (size_t)pardeg}, {PHF_ACCESSOR(PAR_ENTRY, M), (size_t)pardeg},
-        {(size_t)header.sublen, (size_t)header.pardeg}, {out_decoded, 0}, &_time_lossless, stream);
+        PHF_ACCESSOR(BITSTREAM, H4), PHF_ACCESSOR(REVBK, PHF_BYTE), buf->revbk4_bytes,
+        PHF_ACCESSOR(PAR_NBIT, M), PHF_ACCESSOR(PAR_ENTRY, M), header.sublen, header.pardeg,
+        out_decoded, stream);
+
+    event_recording_stop(event_end, stream);
+    event_time_elapsed(event_start, event_end, &_time_lossless);
 
 #undef PHF_ACCESSOR
   }
@@ -176,16 +187,16 @@ struct HuffmanCodec<E, TIMING>::impl {
   void make_metadata()
   {
     // header.self_bytes = sizeof(Header);
-    header.bklen = bklen;
+    header.bklen = rt_bklen;
     header.sublen = sublen;
     header.pardeg = pardeg;
     header.original_len = len;
 
     M nbyte[PHFHEADER_END];
     nbyte[PHFHEADER_HEADER] = PHFHEADER_FORCED_ALIGN;
-    nbyte[PHFHEADER_REVBK] = revbk4_bytes(bklen);
-    nbyte[PHFHEADER_PAR_NBIT] = buf->par_nbit->bytes();
-    nbyte[PHFHEADER_PAR_ENTRY] = buf->par_ncell->bytes();
+    nbyte[PHFHEADER_REVBK] = buf->revbk4_bytes;
+    nbyte[PHFHEADER_PAR_NBIT] = buf->pardeg * sizeof(M);
+    nbyte[PHFHEADER_PAR_ENTRY] = buf->pardeg * sizeof(M);
     nbyte[PHFHEADER_BITSTREAM] = 4 * header.total_ncell;
 
     header.entry[0] = 0;
@@ -198,8 +209,7 @@ struct HuffmanCodec<E, TIMING>::impl {
 
 };  // end of pimpl class
 
-PHF_TPL PHF_CLASS::HuffmanCodec(
-    size_t const inlen, int const bklen, int const pardeg, bool debug) :
+PHF_TPL PHF_CLASS::HuffmanCodec(size_t const inlen, int const pardeg, bool debug) :
     pimpl{std::make_unique<impl>()},
     in_dtype{
         std::is_same_v<E, u1>   ? HF_U1
@@ -207,15 +217,15 @@ PHF_TPL PHF_CLASS::HuffmanCodec(
         : std::is_same_v<E, u4> ? HF_U4
                                 : HF_INVALID}
 {
-  pimpl->init(inlen, bklen, pardeg, debug);
+  pimpl->init(inlen, pardeg, debug);
 };
 
 PHF_TPL PHF_CLASS::~HuffmanCodec(){};
 
 // using CPU huffman
-PHF_TPL PHF_CLASS* PHF_CLASS::buildbook(u4* freq, phf_stream_t stream)
+PHF_TPL PHF_CLASS* PHF_CLASS::buildbook(u4* freq, u2 const rt_bklen, phf_stream_t stream)
 {
-  pimpl->buildbook(freq, stream);
+  pimpl->buildbook(freq, rt_bklen, stream);
   return this;
 }
 
@@ -243,7 +253,7 @@ PHF_TPL PHF_CLASS* PHF_CLASS::clear_buffer()
 PHF_TPL PHF_CLASS* PHF_CLASS::dump_internal_data(string field, string fname)
 {
   auto ofname = fname + ".book_u4";
-  if (field == "book") pimpl->buf->bk4->file(ofname.c_str(), ToFile);
+  if (field == "book") _portable::utils::tofile(ofname, pimpl->buf->h_bk4.get(), pimpl->rt_bklen);
   return this;
 }
 

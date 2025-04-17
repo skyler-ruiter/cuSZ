@@ -2,7 +2,7 @@
  * @file document.hh
  * @author Jiannan Tian
  * @brief
- * @version 0.14.0
+ * @version 0.16.0
  * @date 2020-09-22
  *
  * @copyright (C) 2020 by Washington State University, Argonne National
@@ -54,11 +54,12 @@ static const char psz_short_doc[] =
     "  l size  : _-l [x[-y[-z]]] (1,2,3-D)\n"
     "  p pred  : predictor: \"lrz\", \"spl\", \"lrz-zz\", \"lrz-proto\"\n"
     "\n"
-    "  config list:\n"
-    "    syntax: opt=v, \"kw1=val1,kw1=val2[,...]\"\n"
-    "    + eb     error bound\n"
-    "    + radius The number of quant-codes is 2x radius.\n"
-    "    example: \"--config eb=1e-3,radius=512\"\n"
+    // "  config list:\n"
+    // "    syntax: opt=v, \"kw1=val1,kw1=val2[,...]\"\n"
+    // "    + eb     error bound\n"
+    // "    + radius The number of quant-codes is 2x radius.\n"
+    // "    example: \"--config eb=1e-3,radius=512\"\n"
+    // "    example: \"--config eb=1e-3\"\n"
     "  report list: \n"
     "    syntax: opt[=v], \"kw1[=(on|off)],kw2[=(on|off)]\n"
     "    keyworkds: time, quality\n"
@@ -153,18 +154,24 @@ static const char psz_full_doc[] =
     "        keywords: \'time\', \'cr\', \'quality\', \'compressibility\'\n"
     "        example: \"--report time,cr\", \"--report time=off\"\n"
     "\n"
+    "  ^^*optional::dump-internal-buffer*^^\n\n"
+    "    *--dump* <quant|hist>\n"
+    "        Select from the following strings for internal buffers: \n"
+    "        _quant_: quant-code binary ^^\"[fname].[mode]_[eb].qt_<u1|u2>\"^^\n"
+    "        _hist_ : histogram binary ^^\"[fname].[mode]_[eb].ht[r*2]_u4\"^^\n"
+    "\n"
     "  ^^*help::doc*^^\n\n"
     "    *-h* or *--help*  Query documentation.\n"
     "\n"
     "    *-v* or *--version*  Query build number.\n"
     "\n"
     "    *-V* or *--versioninfo* or *--query-env*  Query runtime.\n"
-    "\n"
-    "  ^^*config::string*^^\n\n"
-    "    *-c* or *--config* (option=value)-list\n"
-    "        syntax: opt=v, \"kw1=val1,kw1=val2[,...]\"\n"
-    "        + *eb*=<val>: error bound\n"
-    "        + *cap*=<val>: capacity, number of quant-codes\n"
+    // "\n"
+    // "  ^^*config::string*^^\n\n"
+    // "    *-c* or *--config* (option=value)-list\n"
+    // "        syntax: opt=v, \"kw1=val1,kw1=val2[,...]\"\n"
+    // "        + *eb*=<val>: error bound\n"
+    // "        + *cap*=<val>: capacity, number of quant-codes\n"
     "\n"
     "*EXAMPLES*\n\n"
     "  ^^*compression pipelines*^^\n\n"

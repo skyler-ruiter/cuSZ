@@ -142,9 +142,9 @@ __global__ void KERNEL_CUHIP_prototype_x_lorenzo_3d1l(
 namespace psz::module {
 
 template <typename T, typename Eq = uint16_t>
-pszerror GPU_PROTO_x_lorenzo_nd(
-    Eq* in_eq, T* in_outlier, T* out_data, std::array<size_t, 3> const _data_len3, double const eb,
-    int const radius, float* time_elapsed, void* stream)
+int GPU_PROTO_x_lorenzo_nd(
+    Eq* in_eq, T* in_outlier, T* out_data, std::array<size_t, 3> const _data_len3, f8 const ebx2,
+    f8 const ebx2_r, int const radius, void* stream)
 {
   auto data_len3 = TO_DIM3(_data_len3);
 
@@ -169,30 +169,25 @@ pszerror GPU_PROTO_x_lorenzo_nd(
        Grid3D = divide3(data_len3, Tile3D);
 
   // error bound
-  auto ebx2 = eb * 2, ebx2_r = 1 / ebx2;
   auto data_leap3 = dim3(1, data_len3.x, data_len3.x * data_len3.y);
 
-  CREATE_GPUEVENT_PAIR;
-  START_GPUEVENT_RECORDING(stream);
-
   if (ndim() == 1) {
-    psz::KERNEL_CUHIP_prototype_x_lorenzo_1d1l<T><<<Grid1D, Block1D, 0, (cudaStream_t)stream>>>(
-        in_eq, in_outlier, out_data, data_len3, data_leap3, radius, ebx2);
+    psz::KERNEL_CUHIP_prototype_x_lorenzo_1d1l<T>
+        <<<Grid1D, Block1D, 0, (GPU_BACKEND_SPECIFIC_STREAM)stream>>>(
+            in_eq, in_outlier, out_data, data_len3, data_leap3, radius, ebx2);
   }
   else if (ndim() == 2) {
-    psz::KERNEL_CUHIP_prototype_x_lorenzo_2d1l<T><<<Grid2D, Block2D, 0, (cudaStream_t)stream>>>(
-        in_eq, in_outlier, out_data, data_len3, data_leap3, radius, ebx2);
+    psz::KERNEL_CUHIP_prototype_x_lorenzo_2d1l<T>
+        <<<Grid2D, Block2D, 0, (GPU_BACKEND_SPECIFIC_STREAM)stream>>>(
+            in_eq, in_outlier, out_data, data_len3, data_leap3, radius, ebx2);
   }
   else if (ndim() == 3) {
-    psz::KERNEL_CUHIP_prototype_x_lorenzo_3d1l<T><<<Grid3D, Block3D, 0, (cudaStream_t)stream>>>(
-        in_eq, in_outlier, out_data, data_len3, data_leap3, radius, ebx2);
+    psz::KERNEL_CUHIP_prototype_x_lorenzo_3d1l<T>
+        <<<Grid3D, Block3D, 0, (GPU_BACKEND_SPECIFIC_STREAM)stream>>>(
+            in_eq, in_outlier, out_data, data_len3, data_leap3, radius, ebx2);
   }
-
-  STOP_GPUEVENT_RECORDING(stream);
-  CHECK_GPU(cudaStreamSynchronize((cudaStream_t)stream));
-
-  TIME_ELAPSED_GPUEVENT(time_elapsed);
-  DESTROY_GPUEVENT_PAIR;
+  else
+    return CUSZ_NOT_IMPLEMENTED;
 
   return CUSZ_SUCCESS;
 }
@@ -201,9 +196,9 @@ pszerror GPU_PROTO_x_lorenzo_nd(
 
 ////////////////////////////////////////////////////////////////////////////////
 #define INSTANTIATIE_GPU_LORENZO_PROTO_X_2params(T, Eq)                                \
-  template pszerror psz::module::GPU_PROTO_x_lorenzo_nd<T>(                            \
+  template int psz::module::GPU_PROTO_x_lorenzo_nd<T>(                                 \
       Eq * in_eq, T * in_outlier, T * out_data, std::array<size_t, 3> const data_len3, \
-      double const eb, int const radius, float* time_elapsed, void* stream);
+      f8 const ebx2, f8 const ebx2_r, int const radius, void* stream);
 
 #define INSTANTIATIE_LORENZO_PROTO_X_1param(T)     \
   INSTANTIATIE_GPU_LORENZO_PROTO_X_2params(T, u1); \

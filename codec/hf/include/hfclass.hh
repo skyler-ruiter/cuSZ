@@ -18,7 +18,7 @@
 
 namespace phf {
 
-template <typename E, bool TIMING = true>
+template <typename E>
 class HuffmanCodec {
  private:
   using SYM = E;
@@ -35,9 +35,7 @@ class HuffmanCodec {
   phf_dtype const in_dtype;
 
   // TODO Is specifying inlen when constructing proper?
-  HuffmanCodec(
-      size_t const inlen, int const bklen, int const pardeg,
-      bool debug = false);
+  HuffmanCodec(size_t const inlen, int const pardeg, bool debug = false);
   ~HuffmanCodec();
 
   float time_book() const;
@@ -45,7 +43,7 @@ class HuffmanCodec {
   size_t inlen() const;
 
   // TODO check d_hist_ext boundary
-  HuffmanCodec* buildbook(u4* d_hist_ext, phf_stream_t);
+  HuffmanCodec* buildbook(u4* d_hist_ext, u2 const rt_bklen, phf_stream_t);
   // TODO inlen is unnecessary
   // alternatively, it can force check the input array
   HuffmanCodec* encode(E*, size_t const, PHF_BYTE**, size_t*, phf_stream_t);
