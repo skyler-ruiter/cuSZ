@@ -19,6 +19,8 @@ cmake .. \
 make -j
 make install
 
+  - can also use ninja, or build the Debug version. may need to specify C++ standard to 17 for some systems
+
 3. make a folder for profiling data /profiling and navigate to /build 
 
 4. run ./../profiling/scripts/run_tests.sh r2r 1e-4
@@ -57,3 +59,18 @@ Misc Notes:
 
 - 01/14/2025:
   - needed to #include <array> to /psz/include/kernel/lrz/lrz.gpu_config.hh 
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Profiling Notes:
+
+- WSL (local) has an RTX 3080 Ti which is Ampere86
+- BigRed200 has A100 SXM which is Ampere80
+- Quartz (gpu) has V100 which is Volta70
+- Quartz (hopper) has H100 which is Hopper90
+- HiPDAC has A4000 which is Ampere86
+  - had to add -DCMAKE_CXX_STANDARD=17 to cmake on HiPDAC (needs C++17 for cusz)
+
+- all tests currently run with r2r error type and 1e-4 error bound
+
+- can update kernel_data_collector.py to collect data on decompression or other metrics

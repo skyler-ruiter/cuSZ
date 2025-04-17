@@ -33,7 +33,10 @@ def gatherKernelStatistics(dataset, file):
                 
                 # get the kernel name, time, and throughput
                 for line in lines:
-                    kernel, time, throughput = line.split()
+                    entries = line.split()
+                    if len(entries) != 3:
+                        raise ValueError(f"Invalid line format in {comp_file}")
+                    kernel, time, throughput = entries
                     kernel_data[kernel] = {
                         'time': float(time),
                         'throughput': float(throughput)
@@ -42,8 +45,9 @@ def gatherKernelStatistics(dataset, file):
                     if kernel == "(total)":
                         break
             comp_times[f"rep{i}"] = kernel_data
-        except FileNotFoundError:
+        except (FileNotFoundError, ValueError):
             skipped_data.append(comp_file)
+            continue
     
     return comp_times
 
@@ -121,17 +125,16 @@ for dataset_csv in dataset_csvs:
         next(reader)
         
         for row in reader:
-            file = row[0]
-            kernel = row[1]
-            time = float(row[2])
-            throughput = float(row[3])
+            if len(row) != 4:
+                continue
+            file, kernel, time, throughput = row
             
             if file not in combined_data:
                 combined_data[file] = {'dataset': dataset}
                 
             combined_data[file][kernel] = {
-                'time': time,
-                'throughput': throughput
+                'time': float(time),
+                'throughput': float(throughput)
             }
 
 # Write combined data to a new CSV file
